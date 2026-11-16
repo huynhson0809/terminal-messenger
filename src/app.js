@@ -25,6 +25,7 @@ const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha"
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
 const CONFIRM_TIMEOUT_MS = 20000;
 const SNIPPET_LEN = 30;
+const LATEST_DEFAULT = 10;
 const TARGET_LEN = 40; // how much of a message's text names it to the extension
 
 function snippet(text) {
@@ -156,6 +157,16 @@ export function createApp({
         open = { id: chat.id, name: chat.name, confirmed: false };
         thread = [];
         bridge.send({ type: "open", id: chat.id });
+        return;
+      }
+      case "latest": {
+        if (!open || !open.confirmed) {
+          print("open a conversation first");
+          return;
+        }
+        const count = Math.min(cmd.count ?? LATEST_DEFAULT, thread.length);
+        print(`-- latest ${count} message${count === 1 ? "" : "s"} --`);
+        for (let i = thread.length - count; i < thread.length; i++) print(numbered(i + 1, thread[i]));
         return;
       }
       case "more": {

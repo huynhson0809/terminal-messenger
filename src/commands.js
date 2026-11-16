@@ -23,6 +23,12 @@ export function parseCommand(line) {
       }
       return { kind: "open", n: Number(args[0]) };
     }
+    case "/latest": {
+      if (args.length > 1 || (args.length === 1 && (!/^\d+$/.test(args[0]) || Number(args[0]) < 1))) {
+        return { kind: "error", message: "usage: /latest [how many messages]" };
+      }
+      return args.length === 1 ? { kind: "latest", count: Number(args[0]) } : { kind: "latest" };
+    }
     case "/clear":
       return { kind: "clear" };
     case "/more":
@@ -38,7 +44,7 @@ export function parseCommand(line) {
     default:
       return {
         kind: "error",
-        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit; use // to start a message with a slash)`,
+        message: `unknown command ${cmd} (try /list, /open <n>, /more, /latest, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit; use // to start a message with a slash)`,
       };
   }
 }

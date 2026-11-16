@@ -66,3 +66,9 @@ test("/clear and /more", () => {
   assert.deepEqual(parseCommand("/clear"), { kind: "clear" });
   assert.deepEqual(parseCommand("/more"), { kind: "more" });
 });
+
+test("/latest takes an optional count", () => {
+  assert.deepEqual(parseCommand("/latest"), { kind: "latest" });
+  assert.deepEqual(parseCommand("/latest 5"), { kind: "latest", count: 5 });
+  for (const bad of ["/latest 0", "/latest x", "/latest 1 2"]) assert.equal(parseCommand(bad).kind, "error", bad);
+});

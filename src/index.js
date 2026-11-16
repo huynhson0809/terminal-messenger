@@ -61,7 +61,7 @@ app = createApp({
   // Clear the screen and the scrollback.
   onClear: () => process.stdout.write("\x1b[2J\x1b[3J\x1b[H"),
 });
-console.log("terminal-messenger ready: /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit");
+console.log("terminal-messenger ready: /list, /open <n>, /more, /latest, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit");
 
 // A multi-line paste arrives as several lines within milliseconds; refuse
 // the whole burst instead of sending one message per line.

@@ -697,3 +697,23 @@ test("a /more window that overlaps nothing is not merged", async () => {
   await ctx.app.handleLine("/react 1 1");
   assert.deepEqual(ctx.sent[0].target, { fromEnd: 2, text: "first message" }); // thread unchanged
 });
+
+test("/latest reprints the newest messages with their numbers and asks the extension nothing", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("/latest 2");
+  assert.deepEqual(ctx.sent, []);
+  assert.deepEqual(ctx.lines, ["-- latest 2 messages --", "[2] me: second", "[3] Alice: third one here"]);
+  ctx.lines.length = 0;
+  await ctx.app.handleLine("/latest");
+  assert.equal(ctx.lines[0], "-- latest 3 messages --");
+  assert.equal(ctx.lines.length, 4);
+});
+
+test("/latest with no open conversation is refused", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await ctx.app.handleLine("/latest");
+  assert.deepEqual(ctx.lines, ["open a conversation first"]);
+});
