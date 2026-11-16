@@ -1,13 +1,13 @@
 import { createInterface } from "node:readline";
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadOrCreateToken, startBridge } from "./bridge.js";
 import { createSendQueue } from "./sendQueue.js";
 import { createApp } from "./app.js";
+import { needsNewToken } from "./token.js";
 
 const tokenPath = join(homedir(), ".terminal-messenger", "token");
-const firstRun = !existsSync(tokenPath);
+const firstRun = needsNewToken(tokenPath);
 const token = loadOrCreateToken(tokenPath);
 if (firstRun) {
   console.log(`Pairing token: ${token}`);
@@ -19,7 +19,11 @@ const bridge = await startBridge({
   token,
   onMessage: (msg) => {
     if (msg?.type === "incoming") process.stdout.write("\u0007");
-    app?.handleExtensionMessage(msg);
+    try {
+      app?.handleExtensionMessage(msg);
+    } catch (err) {
+      console.log(`error: ${err.message}`);
+    }
   },
   onStatus: (up) =>
     console.log(up ? "extension connected" : "extension disconnected"),

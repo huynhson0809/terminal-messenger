@@ -228,3 +228,71 @@ test("unknown extension message is ignored", () => {
   c.app.handleExtensionMessage(null);
   assert.deepEqual(c.lines, []);
 });
+
+const EVIL = "a\u001b[2Jb\u001b]52;c;x\u0007c\nme: forged\rz";
+function assertClean(lines) {
+  assert.equal(lines.length > 0, true);
+  for (const l of lines) assert.doesNotMatch(l, /[\u0000-\u001f\u007f-\u009f]/);
+}
+
+test("remote text is stripped of control chars in every field", async () => {
+  const c = setup();
+  c.app.handleExtensionMessage({
+    type: "chats",
+    chats: [{ id: "a1", name: EVIL, preview: EVIL, unread: true }],
+  });
+  assertClean(c.lines);
+  assert.equal(c.lines.length, 1);
+  c.lines.length = 0;
+  await c.app.handleLine("/open 1");
+  c.app.handleExtensionMessage({
+    type: "messages", id: "a1", messages: [{ from: EVIL, text: EVIL, ts: 1 }],
+  });
+  assertClean(c.lines);
+  assert.equal(c.lines.length, 1);
+  c.lines.length = 0;
+  c.app.handleExtensionMessage({
+    type: "incoming", id: "a1", name: EVIL, message: { from: EVIL, text: EVIL, ts: 1 },
+  });
+  c.app.handleExtensionMessage({
+    type: "incoming", id: "zz", name: EVIL, message: { from: EVIL, text: EVIL, ts: 1 },
+  });
+  assertClean(c.lines);
+  assert.equal(c.lines.length, 2);
+  c.lines.length = 0;
+  c.app.handleExtensionMessage({ type: "error", message: EVIL });
+  assertClean(c.lines);
+  assert.equal(c.lines.length, 1);
+});
+
+test("malformed payloads print an error and never throw", async () => {
+  const c = setup();
+  await withChats(c);
+  await c.app.handleLine("/open 1");
+  c.lines.length = 0;
+  const bad = [
+    { type: "incoming", id: "a1", name: "A" },
+    { type: "incoming", id: "b2", name: "B", message: null },
+    { type: "chats", chats: [null] },
+    { type: "chats", chats: "nope" },
+    { type: "messages", id: "a1", messages: [null] },
+    { type: "messages", id: "a1", messages: 5 },
+  ];
+  for (const m of bad) assert.doesNotThrow(() => c.app.handleExtensionMessage(m));
+  assert.equal(c.lines.length, bad.length);
+  for (const l of c.lines) assert.match(l, /^error: malformed/);
+  c.lines.length = 0;
+  for (const m of [null, 5, "x", {}, { type: "nope" }]) {
+    assert.doesNotThrow(() => c.app.handleExtensionMessage(m));
+  }
+  assert.deepEqual(c.lines, []);
+});
+
+test("bad chats payload leaves previous chat list intact", async () => {
+  const c = setup();
+  await withChats(c);
+  c.app.handleExtensionMessage({ type: "chats", chats: [null] });
+  c.sent.length = 0;
+  await c.app.handleLine("/open 2");
+  assert.deepEqual(c.sent, [{ type: "open", id: "b2" }]);
+});
