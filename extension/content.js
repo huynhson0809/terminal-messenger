@@ -86,6 +86,7 @@
   const SETTLE_AFTER_THREAD_CHANGE_MS = 2500;
   const SCAN_THROTTLE_MS = 500;
   const MAX_EVENTS_PER_SCAN = 5;
+  const MORE_MAX_STEPS = 12;
 
   class LayoutError extends Error {}
 
@@ -318,7 +319,7 @@
     const name = threadName(id);
     const messages = readThreadMessages(name);
     resetBaseline(id, messages);
-    moreState = { id: null, offset: 0 };
+    moreState = { id: null, offset: 0, oldest: null };
     // The pane's own title (not the list name), so a mismatch is visible.
     return lib.buildMessages(id, messages, paneTitle(name));
   }
@@ -497,32 +498,48 @@
     return null;
   }
 
-  // How far (px) from the bottom the last /more scrolled, per conversation.
-  let moreState = { id: null, offset: 0 };
+  // Per conversation: how far (px) from the bottom the last /more scrolled, and
+  // the text of the oldest message reported so far.
+  let moreState = { id: null, offset: 0, oldest: null };
 
-  // Facebook only keeps the few messages in view on the page, so /more scrolls
-  // up one step at a time and reports the messages that are on screen there.
-  // The terminal lines them up with what it already shows.
+  // Facebook only keeps the messages around the view on the page, so /more
+  // scrolls up in small steps until a message older than the oldest one
+  // reported so far shows up (or the top is reached and nothing more loads),
+  // then reports the messages on screen there. The terminal lines them up
+  // with what it already shows.
   async function handleMore(id) {
     if (currentThreadId() !== id) return lib.errorMsg("a different conversation is open in the Messenger tab");
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
     const scroller = findScroller(list);
     if (!scroller) return lib.errorMsg("couldn't find the message list to scroll");
-    if (moreState.id !== id) moreState = { id, offset: 0 };
-    const step = Math.max(80, Math.round(scroller.clientHeight * 0.6)); // less than a screen, so windows overlap
-    const maxTop = scroller.scrollHeight - scroller.clientHeight;
-    const wantTop = Math.max(0, maxTop - (moreState.offset + step));
-    const heightBefore = scroller.scrollHeight;
-    scroller.scrollTop = wantTop;
-    // At the very top Facebook loads an older page of history: wait for it.
-    if (wantTop === 0) await waitForDom(() => scroller.scrollHeight > heightBefore, 6000);
-    await lib.waitForQuiet({
-      quietMs: OPEN_QUIET_MS,
-      maxMs: OPEN_QUIET_MAX_MS,
-      subscribe: (cb) => domChanges(cb, list),
-    });
-    moreState.offset = Math.max(0, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
+    const textsNow = () => keptRows(list).map(displayText);
+    if (moreState.id !== id) moreState = { id, offset: 0, oldest: textsNow()[0] ?? null };
+    const step = Math.max(80, Math.round(scroller.clientHeight * 0.5)); // well under a screen, so windows overlap
+    for (let i = 0; i < MORE_MAX_STEPS; i++) {
+      const wantTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - (moreState.offset + step));
+      const heightBefore = scroller.scrollHeight;
+      scroller.scrollTop = wantTop;
+      // At the very top Facebook loads an older page of history: wait for it.
+      if (wantTop === 0) await waitForDom(() => scroller.scrollHeight > heightBefore, 4000);
+      await lib.waitForQuiet({
+        quietMs: OPEN_QUIET_MS,
+        maxMs: OPEN_QUIET_MAX_MS,
+        subscribe: (cb) => domChanges(cb, list),
+      });
+      moreState.offset = Math.max(0, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
+      const texts = textsNow();
+      const idx = moreState.oldest === null ? -1 : texts.indexOf(moreState.oldest);
+      if (idx > 0) {
+        moreState.oldest = texts[0]; // something older than before is on screen
+        break;
+      }
+      if (idx === -1) {
+        moreState.oldest = texts[0] ?? null; // lost track; the terminal will say if it can't line up
+        break;
+      }
+      if (wantTop === 0 && scroller.scrollHeight <= heightBefore) break; // top of history, nothing more
+    }
     const name = threadName(id);
     const messages = readThreadMessages(name);
     scroller.scrollTop = scroller.scrollHeight; // back to the newest
