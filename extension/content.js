@@ -71,7 +71,7 @@
   const OPEN_TIMEOUT_MS = 10000;
   const OPEN_QUIET_MS = 300;
   const OPEN_QUIET_MAX_MS = 3000;
-  const TYPE_TIMEOUT_MS = 1500;
+  const TYPE_TIMEOUT_MS = 4000; // a hidden page runs timers about once a second
   const SETTLE_AFTER_THREAD_CHANGE_MS = 2500;
   const SCAN_THROTTLE_MS = 500;
   const MAX_EVENTS_PER_SCAN = 5;
@@ -328,17 +328,17 @@
     describe: (box) => {
       const sel = window.getSelection();
       const caretInBox = Boolean(sel && sel.anchorNode && box.contains(sel.anchorNode));
-      return `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} caretInBox=${caretInBox} len=${box.textContent.length}`;
+      return `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} caretInBox=${caretInBox} shim=${document.documentElement.getAttribute("data-tm-shim")} len=${box.textContent.length}`;
     },
     pressEnter,
     waitFor: waitForDom,
   };
 
-  // page-shim.js (page world) makes document.hasFocus() true for the length of
-  // a send; Facebook's message box ignores typing while the document is not
-  // focused, which is always the case when you are working in the terminal.
+  // page-shim.js (page world) makes the page see a focused, visible document
+  // for the length of a send; Facebook's message box ignores typing otherwise,
+  // which is always the case when you are working in the terminal.
   function setFocusShim(on) {
-    document.dispatchEvent(new Event(on ? "tm-focus-shim-on" : "tm-focus-shim-off"));
+    document.dispatchEvent(new Event(on ? "tm-shim-on" : "tm-shim-off"));
   }
 
   async function handleSend(id, text) {
