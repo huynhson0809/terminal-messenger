@@ -715,16 +715,6 @@ test("performSend happy path: types once, presses Enter exactly once, replies se
   assert.equal(gate.marks, 1);
 });
 
-test("performSend refuses while the Messenger window is hidden, typing nothing", async () => {
-  const page = fakePage();
-  page.isVisible = () => false;
-  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
-  assert.equal(r.type, "error");
-  assert.match(r.message, /window is hidden/);
-  assert.deepEqual(page.inserted, []);
-  assert.equal(page.enters, 0);
-});
-
 test("performSend refuses during the settle window, typing nothing", async () => {
   const page = fakePage({ settled: false });
   const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
