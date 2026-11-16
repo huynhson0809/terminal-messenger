@@ -314,9 +314,23 @@
     focus: (box) => box.focus(),
     isFocused: composerFocused,
     isAttached: (box) => box.isConnected,
-    insertText: (box, text) => document.execCommand("insertText", false, text),
-    describe: (box) =>
-      `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} len=${box.textContent.length}`,
+    // focus() alone doesn't always put the caret inside the box (the caret may
+    // still be wherever the last click was), and execCommand types at the
+    // caret. So place it at the end of the box explicitly first.
+    insertText: (box, text) => {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(box);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return document.execCommand("insertText", false, text);
+    },
+    describe: (box) => {
+      const sel = window.getSelection();
+      const caretInBox = Boolean(sel && sel.anchorNode && box.contains(sel.anchorNode));
+      return `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} caretInBox=${caretInBox} len=${box.textContent.length}`;
+    },
     pressEnter,
     waitFor: waitForDom,
   };
