@@ -41,6 +41,18 @@ export function createBridgeSender(bridge) {
   };
 }
 
+// Largest k such that the last k of `chunk` have the same texts as the first k
+// of `thread` (the sender is not compared: the first rows of a window are
+// attributed before their sender heading is in view).
+function overlap(chunk, thread) {
+  for (let k = Math.min(chunk.length, thread.length); k >= 1; k--) {
+    let same = true;
+    for (let i = 0; i < k && same; i++) same = chunk[chunk.length - k + i].text === thread[i].text;
+    if (same) return k;
+  }
+  return 0;
+}
+
 // Pure app logic: no I/O of its own. `bridge` needs {send, isConnected},
 // `queue` needs {enqueue(item)}, `print` receives one output line at a time.
 export function createApp({
@@ -241,13 +253,20 @@ export function createApp({
         if (!Array.isArray(msg.messages)) throw new Error("messages not an array");
         const next = msg.messages.map(cleanMessage);
         if (msg.older === true) {
-          // Reply to /more: the full list, with older messages at the front.
-          const added = next.length - thread.length;
-          thread = next;
-          if (added <= 0) {
+          // Reply to /more: the messages on screen one step further up. Line
+          // them up with the start of what is already shown (by text).
+          const k = overlap(next, thread);
+          if (k === 0) {
+            print("couldn't line the older messages up with the ones shown; run /open and try /more again");
+            return;
+          }
+          const older = next.slice(0, next.length - k);
+          if (older.length === 0) {
             print("no older messages");
             return;
           }
+          thread = older.concat(thread);
+          const added = older.length;
           print(`-- ${added} older message${added === 1 ? "" : "s"} (message numbers have shifted by ${added}) --`);
           for (let i = 0; i < added; i++) print(numbered(i + 1, thread[i]));
           return;

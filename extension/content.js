@@ -318,6 +318,7 @@
     const name = threadName(id);
     const messages = readThreadMessages(name);
     resetBaseline(id, messages);
+    moreState = { id: null, offset: 0 };
     // The pane's own title (not the list name), so a mismatch is visible.
     return lib.buildMessages(id, messages, paneTitle(name));
   }
@@ -379,6 +380,9 @@
       return row ? { row } : { error: "no message from the other person to react to" };
     }
     const kept = keptRows(list);
+    if (target.fromEnd >= kept.length) {
+      return { error: "that message is further back than the Messenger tab keeps on screen (only the newest few messages can be reacted to or replied to)" };
+    }
     const info = kept[kept.length - 1 - target.fromEnd];
     if (!info || !lib.textMatchesSnippet(displayText(info), target.text)) {
       return { error: "that message isn't where it was (new messages or older ones loaded); run /open again" };
@@ -484,30 +488,41 @@
 
   // ---- loading older messages -----------------------------------------------
 
+  // The chat's scrolling box is inside the message list on the live page;
+  // look there first, then outward.
   function findScroller(list) {
-    for (let el = list; el && el !== document.body; el = el.parentElement) {
-      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 10) return el;
-    }
+    const scrolls = (el) => /(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 10;
+    for (const el of list.querySelectorAll("*")) if (scrolls(el)) return el;
+    for (let el = list; el && el !== document.body; el = el.parentElement) if (scrolls(el)) return el;
     return null;
   }
 
+  // How far (px) from the bottom the last /more scrolled, per conversation.
+  let moreState = { id: null, offset: 0 };
+
+  // Facebook only keeps the few messages in view on the page, so /more scrolls
+  // up one step at a time and reports the messages that are on screen there.
+  // The terminal lines them up with what it already shows.
   async function handleMore(id) {
     if (currentThreadId() !== id) return lib.errorMsg("a different conversation is open in the Messenger tab");
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
     const scroller = findScroller(list);
     if (!scroller) return lib.errorMsg("couldn't find the message list to scroll");
-    const count = () => list.querySelectorAll(SELECTORS.messageRow).length;
-    const before = count();
-    scroller.scrollTop = 0;
-    // Facebook loads the older page when the top is reached. If nothing more
-    // arrives, there is nothing older.
-    await waitForDom(() => count() > before, 6000);
+    if (moreState.id !== id) moreState = { id, offset: 0 };
+    const step = Math.max(80, Math.round(scroller.clientHeight * 0.6)); // less than a screen, so windows overlap
+    const maxTop = scroller.scrollHeight - scroller.clientHeight;
+    const wantTop = Math.max(0, maxTop - (moreState.offset + step));
+    const heightBefore = scroller.scrollHeight;
+    scroller.scrollTop = wantTop;
+    // At the very top Facebook loads an older page of history: wait for it.
+    if (wantTop === 0) await waitForDom(() => scroller.scrollHeight > heightBefore, 6000);
     await lib.waitForQuiet({
       quietMs: OPEN_QUIET_MS,
       maxMs: OPEN_QUIET_MAX_MS,
       subscribe: (cb) => domChanges(cb, list),
     });
+    moreState.offset = Math.max(0, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
     const name = threadName(id);
     const messages = readThreadMessages(name);
     scroller.scrollTop = scroller.scrollHeight; // back to the newest

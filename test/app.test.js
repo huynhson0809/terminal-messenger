@@ -666,3 +666,34 @@ test("a confirmed send is added to the thread so message numbers stay aligned", 
   await ctx.app.handleLine("/react 1 4");
   assert.deepEqual(ctx.sent[0].target, { fromEnd: 0, text: "brand new reply" });
 });
+
+test("a /more window that overlaps only the start of what is shown is merged in front of it", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx); // first message, second, third one here
+  const chunk = [
+    { from: "x", text: "way back", ts: 0 },
+    { from: "x", text: "a bit back", ts: 0 },
+    { from: "x", text: "first message", ts: 1 }, // same text as thread[0], different attribution
+    { from: "x", text: "second", ts: 2 },
+  ];
+  ctx.app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: chunk });
+  assert.match(ctx.lines[0], /2 older messages.*shifted by 2/);
+  assert.deepEqual(ctx.lines.slice(1), ["[1] x: way back", "[2] x: a bit back"]);
+});
+
+test("a /more window that overlaps nothing is not merged", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  ctx.app.handleExtensionMessage({
+    type: "messages",
+    id: "a1",
+    older: true,
+    messages: [{ from: "x", text: "unrelated", ts: 0 }],
+  });
+  assert.match(ctx.lines[0], /couldn't line the older messages up/);
+  ctx.sent.length = 0;
+  await ctx.app.handleLine("/react 1 1");
+  assert.deepEqual(ctx.sent[0].target, { fromEnd: 2, text: "first message" }); // thread unchanged
+});
