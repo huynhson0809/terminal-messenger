@@ -454,3 +454,128 @@ test("createRecentSent remembers sent texts for a while (to avoid echoing them a
   t = 1001;
   assert.equal(recent.take("again"), false);
 });
+
+// ---- fix round 1: send gap enforced where typing happens ---------------------------
+
+test("sendGapWait: no previous send means no wait", () => {
+  assert.equal(lib.sendGapWait(null, 5000), 0);
+  assert.equal(lib.LIMITS.MIN_SEND_GAP_MS, 1000);
+});
+
+test("sendGapWait: waits out the rest of the 1000 ms since the last Enter", () => {
+  assert.equal(lib.sendGapWait(10000, 10050), 950);
+  assert.equal(lib.sendGapWait(10000, 11000), 0);
+  assert.equal(lib.sendGapWait(10000, 12000), 0);
+  assert.equal(lib.sendGapWait(10000, 10200, 500), 300);
+});
+
+function gateClock(start = 0) {
+  let t = start;
+  const sleeps = [];
+  return {
+    now: () => t,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      t += ms;
+    },
+    advance: (ms) => {
+      t += ms;
+    },
+    sleeps,
+  };
+}
+
+test("createSendGate: first send goes immediately, marks start-to-start", async () => {
+  const c = gateClock(1000);
+  const gate = lib.createSendGate({ now: c.now, sleep: c.sleep });
+  await gate.waitTurn();
+  assert.deepEqual(c.sleeps, []);
+  gate.markSent();
+  c.advance(1500);
+  await gate.waitTurn();
+  assert.deepEqual(c.sleeps, []);
+});
+
+test("createSendGate: a send queued behind a slow one still waits 1000 ms after the previous Enter", async () => {
+  const c = gateClock(0);
+  const gate = lib.createSendGate({ now: c.now, sleep: c.sleep });
+  const run = lib.createSerialRunner();
+  const enters = [];
+  const send = () =>
+    run(async () => {
+      await gate.waitTurn();
+      c.advance(20); // typing
+      gate.markSent(); // Enter pressed
+      enters.push(c.now());
+      c.advance(50); // composer clears quickly
+    });
+  // #1 and #2 arrive back to back while #1 is still in flight.
+  await Promise.all([send(), send()]);
+  assert.equal(enters.length, 2);
+  assert.ok(enters[1] - enters[0] >= 1000, `gap ${enters[1] - enters[0]}`);
+});
+
+// ---- fix round 1: non-text messages ------------------------------------------------
+
+test("mediaPlaceholder maps kinds and ignores unknown ones", () => {
+  assert.equal(lib.mediaPlaceholder("image"), "[image]");
+  assert.equal(lib.mediaPlaceholder("video"), "[video]");
+  assert.equal(lib.mediaPlaceholder("audio"), "[audio]");
+  assert.equal(lib.mediaPlaceholder("file"), "[attachment]");
+  assert.equal(lib.mediaPlaceholder(null), "");
+  assert.equal(lib.mediaPlaceholder("weird"), "");
+});
+
+test("isMessageMediaSize: avatars and read receipts are too small to be messages", () => {
+  assert.equal(lib.isMessageMediaSize(16, 16), false); // "Seen" receipt
+  assert.equal(lib.isMessageMediaSize(32, 32), false); // sender avatar
+  assert.equal(lib.isMessageMediaSize(200, 150), true); // photo
+  assert.equal(lib.isMessageMediaSize(48, 48), true); // small sticker
+  assert.equal(lib.isMessageMediaSize(300, 0), false);
+});
+
+test("attributeSenders keeps non-text rows that carry media, as a placeholder", () => {
+  const rows = [
+    { outgoing: false, sender: "Bob", text: "", media: "image" },
+    { outgoing: false, sender: null, text: "  ", media: "video" },
+    { outgoing: true, sender: null, text: "", media: "image" },
+  ];
+  assert.deepEqual(lib.attributeSenders(rows, "Bob"), [
+    { from: "Bob", text: "[image]" },
+    { from: "Bob", text: "[video]" },
+    { from: "you", text: "[image]" },
+  ]);
+});
+
+test("attributeSenders: text wins over media (caption with photo)", () => {
+  assert.deepEqual(
+    lib.attributeSenders([{ outgoing: false, sender: "Bob", text: "look", media: "image" }], ""),
+    [{ from: "Bob", text: "look" }],
+  );
+});
+
+test("attributeSenders still drops empty rows without media (dividers, spacers)", () => {
+  assert.deepEqual(
+    lib.attributeSenders(
+      [
+        { outgoing: false, sender: null, text: "", media: null },
+        { outgoing: false, sender: null, text: " \n " },
+      ],
+      "Bob",
+    ),
+    [],
+  );
+});
+
+test("a photo someone sends produces an incoming message; my own photo does not", () => {
+  const before = lib.attributeSenders([{ outgoing: false, sender: "Bob", text: "hi" }], "Bob");
+  const after = lib.attributeSenders(
+    [
+      { outgoing: false, sender: "Bob", text: "hi" },
+      { outgoing: true, sender: null, text: "", media: "image" },
+      { outgoing: false, sender: null, text: "", media: "image" },
+    ],
+    "Bob",
+  );
+  assert.deepEqual(lib.incomingOnly(lib.newMessagesSince(before, after)), [{ from: "Bob", text: "[image]" }]);
+});

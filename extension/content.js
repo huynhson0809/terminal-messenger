@@ -50,6 +50,16 @@
 
     // The message box (Lexical contenteditable).
     composer: '[role="main"] [role="textbox"][contenteditable="true"]',
+
+    // Non-text message content inside a message row, checked in this order.
+    // Only elements rendered at least LIMITS.MIN_MEDIA_PX on both sides count,
+    // which rules out sender avatars and "Seen" receipts in the same row.
+    messageMedia: [
+      ["video", "video"],
+      ["audio", "audio"],
+      ["img", "image"],
+      ['[role="img"]', "image"],
+    ],
   };
   // ==========================================================================
 
@@ -68,6 +78,7 @@
 
   // Incoming-detection state (see the bottom of this file).
   const recentSent = lib.createRecentSent({ ttlMs: 60000 });
+  const sendGate = lib.createSendGate();
   let baseline = { threadId: null, messages: [], settleUntil: 0 };
   let unreadState = null;
   let lastScan = 0;
@@ -158,6 +169,16 @@
     return textOf(first(SELECTORS.threadTitle));
   }
 
+  function mediaKind(row) {
+    for (const [selector, kind] of SELECTORS.messageMedia) {
+      for (const el of row.querySelectorAll(selector)) {
+        const box = el.getBoundingClientRect();
+        if (lib.isMessageMediaSize(box.width, box.height)) return kind;
+      }
+    }
+    return null;
+  }
+
   function readThreadMessages(fallbackName) {
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
@@ -169,7 +190,7 @@
         .map(textOf)
         .filter((t) => t && t !== heading)
         .join(" ");
-      rows.push({ outgoing, sender: outgoing ? null : heading || null, text });
+      rows.push({ outgoing, sender: outgoing ? null : heading || null, text, media: text ? null : mediaKind(row) });
     }
     return lib.attributeSenders(rows, fallbackName);
   }
@@ -236,7 +257,17 @@
       return lib.errorMsg("the message box in the Messenger tab is not empty; not sent");
     }
 
-    // 2. Type it into the real composer.
+    // 2. Keep at least 1 s between Enter presses, even when this send was
+    //    queued behind a slow open/confirm. Then re-check everything: the
+    //    page may have changed while we waited.
+    await sendGate.waitTurn();
+    const afterWait = lib.canSend(location.pathname, id, text);
+    if (!afterWait.ok) return lib.errorMsg(afterWait.error);
+    if (!composer.isConnected || !lib.composerIsEmpty(composer.textContent)) {
+      return lib.errorMsg("the message box in the Messenger tab changed; not sent");
+    }
+
+    // 3. Type it into the real composer.
     composer.focus();
     if (!composerFocused(composer)) return lib.errorMsg("couldn't focus the message box; not sent");
     document.execCommand("insertText", false, text);
@@ -247,14 +278,15 @@
       );
     }
 
-    // 3. Re-check right before Enter: still the same thread, still focused.
+    // 4. Re-check right before Enter: still the same thread, still focused.
     const again = lib.canSend(location.pathname, id, text);
     if (!again.ok) return lib.errorMsg(`${again.error} (the text is still in the message box)`);
     if (!composer.isConnected || !composerFocused(composer)) {
       return lib.errorMsg("the message box lost focus; not sent (the text is still in the box)");
     }
 
-    // 4. Press Enter once and wait for the box to clear. Never retry.
+    // 5. Press Enter once and wait for the box to clear. Never retry.
+    sendGate.markSent(); // start-to-start: recorded as Enter is pressed
     pressEnter(composer);
     const cleared = await waitForDom(() => {
       const box = document.querySelector(SELECTORS.composer);

@@ -18,6 +18,15 @@
     MAX_PREVIEW_LEN: 300,
     MAX_MESSAGES: 30,
     SEND_CONFIRM_TIMEOUT_MS: 5000,
+    MIN_SEND_GAP_MS: 1000, // between Enter presses, start to start
+    MIN_MEDIA_PX: 48, // smaller images are avatars / read receipts, not messages
+  });
+
+  const MEDIA_PLACEHOLDERS = Object.freeze({
+    image: "[image]",
+    video: "[video]",
+    audio: "[audio]",
+    file: "[attachment]",
   });
 
   const LAYOUT_ERROR = "can't read the page, Facebook layout may have changed";
@@ -109,8 +118,21 @@
     };
   }
 
-  // rows: [{outgoing, sender, text}] in page order. A sender heading only
-  // appears on the first message of a run, so it carries over to later rows.
+  function mediaPlaceholder(kind) {
+    return Object.prototype.hasOwnProperty.call(MEDIA_PLACEHOLDERS, kind) ? MEDIA_PLACEHOLDERS[kind] : "";
+  }
+
+  // Rendered size check that tells a photo/sticker/video apart from a sender
+  // avatar (~28-32 px) or a "Seen" receipt (~14-16 px) in the same row.
+  function isMessageMediaSize(width, height) {
+    return width >= LIMITS.MIN_MEDIA_PX && height >= LIMITS.MIN_MEDIA_PX;
+  }
+
+  // rows: [{outgoing, sender, text, media}] in page order; media is a kind
+  // ("image", "video", "audio", "file") or null. A row with no text but with
+  // media becomes a placeholder; a row with neither (dividers, spacers) is
+  // dropped. A sender heading only appears on the first message of a run, so
+  // it carries over to later rows.
   function attributeSenders(rows, fallbackName) {
     const out = [];
     let lastSender = cleanText(fallbackName, LIMITS.MAX_NAME_LEN) || "them";
@@ -118,7 +140,7 @@
       if (!r) continue;
       const sender = cleanText(r.sender, LIMITS.MAX_NAME_LEN);
       if (!r.outgoing && sender) lastSender = sender;
-      const text = cleanText(r.text);
+      const text = cleanText(r.text) || mediaPlaceholder(r.media);
       if (!text) continue;
       out.push({ from: r.outgoing ? "you" : lastSender, text });
     }
@@ -284,6 +306,32 @@
     };
   }
 
+  // Milliseconds to wait so that at least minGapMs separates two Enter presses.
+  function sendGapWait(lastSendAt, now, minGapMs = LIMITS.MIN_SEND_GAP_MS) {
+    if (typeof lastSendAt !== "number") return 0;
+    return Math.max(0, lastSendAt + minGapMs - now);
+  }
+
+  // Enforces the gap where the typing happens: waitTurn() before typing,
+  // markSent() at the moment Enter is pressed (also when confirmation later
+  // times out, because the Enter was still pressed).
+  function createSendGate({
+    minGapMs = LIMITS.MIN_SEND_GAP_MS,
+    now = Date.now,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  } = {}) {
+    let lastSendAt = null;
+    return {
+      async waitTurn() {
+        const wait = sendGapWait(lastSendAt, now(), minGapMs);
+        if (wait > 0) await sleep(wait);
+      },
+      markSent() {
+        lastSendAt = now();
+      },
+    };
+  }
+
   function createSerialRunner() {
     let tail = Promise.resolve();
     return function run(fn) {
@@ -315,6 +363,10 @@
     pickMessengerTab,
     waitFor,
     createSerialRunner,
+    sendGapWait,
+    createSendGate,
+    mediaPlaceholder,
+    isMessageMediaSize,
     createRecentSent,
   });
 
