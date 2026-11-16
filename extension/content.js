@@ -373,15 +373,15 @@
     describe: (box) => {
       const sel = window.getSelection();
       const caretInBox = Boolean(sel && sel.anchorNode && box.contains(sel.anchorNode));
-      return `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} caretInBox=${caretInBox} shim=${document.documentElement.getAttribute("data-tm-shim")} len=${box.textContent.length}`;
+      return `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} caretInBox=${caretInBox} activeInBox=${box.contains(document.activeElement)} htmlLen=${box.innerHTML.length} shim=${document.documentElement.getAttribute("data-tm-shim")} len=${box.textContent.length}`;
     },
     pressEnter,
     waitFor: waitForDom,
   };
 
-  // page-shim.js (page world) makes the page see a focused, visible document
-  // for the length of a send; Facebook's message box ignores typing otherwise,
-  // which is always the case when you are working in the terminal.
+  // page-shim.js (page world) makes document.hasFocus() true for the length of
+  // a send; Facebook's message box ignores typing while the document is not
+  // focused, which is always the case when you are working in the terminal.
   function setFocusShim(on) {
     document.dispatchEvent(new Event(on ? "tm-shim-on" : "tm-shim-off"));
   }
