@@ -314,6 +314,8 @@
     isFocused: composerFocused,
     isAttached: (box) => box.isConnected,
     insertText: (box, text) => document.execCommand("insertText", false, text),
+    describe: (box) =>
+      `visible=${document.visibilityState} hasFocus=${document.hasFocus()} connected=${box.isConnected} len=${box.textContent.length}`,
     pressEnter,
     waitFor: waitForDom,
   };

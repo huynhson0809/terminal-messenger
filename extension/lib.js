@@ -422,9 +422,13 @@
     // 3. Type into the real composer and verify exactly that text landed.
     page.focus(box);
     if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
-    page.insertText(box, text);
+    const inserted = page.insertText(box, text);
     const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
-    if (!typed) return err(SEND_ERRORS.typing);
+    if (!typed) {
+      // Diagnostics only (lengths and flags, never the text itself).
+      const info = typeof page.describe === "function" ? ` [debug: insert=${inserted} ${page.describe(box)}]` : "";
+      return err(SEND_ERRORS.typing + info);
+    }
 
     // 4. Last re-check right before Enter.
     const g = canSend(page.pathname(), id, text);
