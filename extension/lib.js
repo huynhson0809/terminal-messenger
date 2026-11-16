@@ -367,6 +367,8 @@
   }
 
   const SEND_ERRORS = Object.freeze({
+    hidden:
+      "the Messenger window is hidden (minimized, on another desktop, or fully covered), so Chrome pauses the page and typing can't work; keep that window visible; not sent",
     loading: "conversation still loading; not sent",
     notEmpty: "the message box in the Messenger tab is not empty; not sent",
     changed: "the message box in the Messenger tab changed; not sent",
@@ -378,7 +380,7 @@
 
   // The whole send-safety sequence, written against a small page adapter so
   // it can be tested without a browser. content.js supplies the real one.
-  //   page: pathname(), isSettled(id), findComposers(), textOf(box),
+  //   page: pathname(), isVisible() (optional), isSettled(id), findComposers(), textOf(box),
   //         focus(box), isFocused(box), isAttached(box), insertText(box, text),
   //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>
   //   gate: waitTurn(), markSent()   (createSendGate)
@@ -394,6 +396,8 @@
     const err = (message) => errorMsg(message);
     // Thread, settle window, a single empty composer. Returns the box or an error.
     const check = (expectedBox) => {
+      // Chrome pauses a hidden page's rendering, so Facebook never applies typed text.
+      if (typeof page.isVisible === "function" && !page.isVisible()) return { error: SEND_ERRORS.hidden };
       const g = canSend(page.pathname(), id, rawText);
       if (!g.ok) return { error: g.error };
       if (!page.isSettled(id)) return { error: SEND_ERRORS.loading };

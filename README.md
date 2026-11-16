@@ -10,7 +10,7 @@ Nothing logs in to Facebook for you: the terminal app talks only to the extensio
 2. Run `npm start`. On first run it prints `Pairing token: ...`; copy that token. It is stored in `~/.terminal-messenger/token` and reused on later runs.
 3. In Chrome, open `chrome://extensions`, turn on Developer mode, click "Load unpacked" and choose the `extension/` folder.
 4. Click the extension's icon, paste the token into the popup and press Save. The popup shows "connected" and the terminal prints `extension connected`.
-5. Open `https://www.facebook.com/messages/` and pin the tab. Put it in a separate Chrome window that you minimize or move to another desktop. The tab has to stay open. If the Messenger tab was already open before you loaded (or reloaded) the extension, reload the tab: Chrome doesn't add the extension to tabs that were already open.
+5. Open `https://www.facebook.com/messages/` and pin the tab. Put it in its own small Chrome window, with Messenger as that window's active tab, and keep part of the window visible on screen (a corner, or a second monitor). Do not minimize it, move it to another desktop, or cover it completely: Chrome pauses hidden pages and sending then fails with "the Messenger window is hidden". The tab has to stay open. If the Messenger tab was already open before you loaded (or reloaded) the extension, reload the tab: Chrome doesn't add the extension to tabs that were already open.
 
 Lost the token? Print it with `cat ~/.terminal-messenger/token`. To get a new one, delete that file and restart `npm start`, then paste the new token in the popup.
 
@@ -45,7 +45,7 @@ If a step reports an error such as "can't read the page", see Known limits.
 
 ## Known limits
 
-- The Messenger tab must stay open (a minimized window is fine).
+- The Messenger tab must stay open, and its window must stay at least partly visible to send. A minimized, off-desktop or fully covered window can still be read, but Chrome pauses it, so sending is refused.
 - Facebook changes its page layout from time to time. When it does, reading or sending can break until the selectors in the single `SELECTORS` object at the top of `extension/content.js` are updated. Those selectors were not verified against live Facebook when this was written, so expect to adjust them on first use.
 - End-to-end encrypted chats only work if they are already unlocked in the browser tab.
 - Text only. Images, stickers and videos show as placeholders such as `[image]`. File attachments without an image, video or audio preview may not notify.

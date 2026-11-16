@@ -307,6 +307,7 @@
   // sequence (and is unit-tested against a fake of this adapter).
   const page = {
     pathname: () => location.pathname,
+    isVisible: () => document.visibilityState === "visible",
     isSettled: (id) => baseline.threadId === id && Date.now() >= baseline.settleUntil,
     findComposers: () => Array.from(document.querySelectorAll(SELECTORS.composer)),
     textOf: (box) => box.textContent,
