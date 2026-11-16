@@ -152,3 +152,40 @@ test('close() shuts down server and clients', async (t) => {
   await a.closed;
   assert.equal(bridge.isConnected(), false);
 });
+
+for (const [name, bad] of [
+  ['empty string', ''],
+  ['undefined', undefined],
+  ['non-string', 12345],
+  ['wrong-length', 'a'.repeat(63)],
+  ['non-hex', 'z'.repeat(64)],
+]) {
+  test(`startBridge rejects ${name} token`, async () => {
+    await assert.rejects(
+      startBridge({ token: bad, port: 0, onMessage() {}, onStatus() {} }),
+      /token/,
+    );
+  });
+}
+
+test('post-auth hello is dropped, not passed to onMessage', async (t) => {
+  const { messages, bridge, connect } = await setup(t);
+  const ws = await connect();
+  ws.send(JSON.stringify({ type: 'hello', token: TOKEN }));
+  await until(() => bridge.isConnected());
+  ws.send(JSON.stringify({ type: 'hello', token: TOKEN }));
+  ws.send(JSON.stringify({ type: 'after' }));
+  await until(() => messages.length === 1);
+  assert.deepEqual(messages, [{ type: 'after' }]);
+});
+
+test('message sent before hello is never delivered', async (t) => {
+  const { messages, statuses, connect } = await setup(t);
+  const ws = await connect();
+  ws.send(JSON.stringify({ type: 'secret', text: 'early' }));
+  ws.send(JSON.stringify({ type: 'hello', token: TOKEN }));
+  await ws.closed;
+  await tick();
+  assert.deepEqual(messages, []);
+  assert.deepEqual(statuses, []);
+});

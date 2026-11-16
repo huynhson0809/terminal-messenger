@@ -33,13 +33,21 @@ function tokenMatches(expected, given) {
 
 export function startBridge({ token, port = 8765, onMessage, onStatus }) {
   return new Promise((resolve, reject) => {
+    if (typeof token !== 'string' || !TOKEN_RE.test(token)) {
+      throw new Error('startBridge: token must be a 64-char hex string');
+    }
     const wss = new WebSocketServer({ host: HOST, port, maxPayload: MAX_PAYLOAD });
     let current = null;
 
     wss.on('connection', (ws) => {
       let authed = false;
+      let rejected = false;
+      const reject_ = () => {
+        rejected = true;
+        ws.terminate();
+      };
       const timer = setTimeout(() => {
-        if (!authed) ws.terminate();
+        if (!authed) reject_();
       }, AUTH_TIMEOUT_MS);
       timer.unref();
 
@@ -53,11 +61,12 @@ export function startBridge({ token, port = 8765, onMessage, onStatus }) {
       });
 
       ws.on('message', (data) => {
+        if (rejected) return;
         let msg;
         try {
           msg = JSON.parse(data.toString());
         } catch {
-          if (!authed) ws.terminate();
+          if (!authed) reject_();
           return;
         }
         if (!authed) {
@@ -67,7 +76,7 @@ export function startBridge({ token, port = 8765, onMessage, onStatus }) {
             msg.type !== 'hello' ||
             !tokenMatches(token, msg.token)
           ) {
-            ws.terminate();
+            reject_();
             return;
           }
           authed = true;
@@ -78,6 +87,7 @@ export function startBridge({ token, port = 8765, onMessage, onStatus }) {
           else onStatus(true);
           return;
         }
+        if (msg !== null && typeof msg === 'object' && msg.type === 'hello') return;
         if (ws === current) onMessage(msg);
       });
     });
