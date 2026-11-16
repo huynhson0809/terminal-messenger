@@ -1,13 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../src/app.js";
+import { createApp, createBridgeSender } from "../src/app.js";
 
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
+
+function fakeTimers() {
+  const list = [];
+  return {
+    list,
+    setTimer: (fn, ms) => {
+      const t = { fn, ms, live: true };
+      list.push(t);
+      return t;
+    },
+    clearTimer: (t) => {
+      if (t) t.live = false;
+    },
+    live: () => list.filter((t) => t.live),
+    fireAll: () => {
+      for (const t of list.filter((x) => x.live)) {
+        t.live = false;
+        t.fn();
+      }
+    },
+  };
+}
 
 function setup({ connected = true, queueFails = false } = {}) {
   const sent = [];
   const lines = [];
   const state = { connected };
+  const timers = fakeTimers();
   const bridge = {
     send: (m) => sent.push(m),
     isConnected: () => state.connected,
@@ -15,11 +38,17 @@ function setup({ connected = true, queueFails = false } = {}) {
   const queue = {
     enqueue: async (item) => {
       if (queueFails) throw new Error("boom");
-      bridge.send({ type: "send", id: item.id, text: item.text });
+      bridge.send({ type: "send", id: item.id, text: item.text, ref: item.ref });
     },
   };
-  const app = createApp({ bridge, print: (l) => lines.push(l), queue });
-  return { app, sent, lines, state };
+  const app = createApp({
+    bridge,
+    print: (l) => lines.push(l),
+    queue,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+  return { app, sent, lines, state, timers };
 }
 
 const CHATS = [
@@ -30,6 +59,15 @@ const CHATS = [
 async function withChats(ctx) {
   await ctx.app.handleLine("/list");
   ctx.app.handleExtensionMessage({ type: "chats", chats: CHATS });
+  ctx.sent.length = 0;
+  ctx.lines.length = 0;
+}
+
+// /open n and the extension's `messages` reply that confirms it.
+async function openChat(ctx, n = 1) {
+  await ctx.app.handleLine(`/open ${n}`);
+  const chat = CHATS[n - 1];
+  ctx.app.handleExtensionMessage({ type: "messages", id: chat.id, title: chat.name, messages: [] });
   ctx.sent.length = 0;
   ctx.lines.length = 0;
 }
@@ -78,22 +116,23 @@ test("text with no open conversation is refused", async () => {
   assert.deepEqual(c.lines, ["open a conversation first"]);
 });
 
-test("text with open conversation goes through queue", async () => {
+test("text with open conversation goes through queue, with a ref", async () => {
   const c = setup();
   await withChats(c);
-  await c.app.handleLine("/open 1");
-  c.sent.length = 0;
+  await openChat(c);
   await c.app.handleLine("hello there");
-  assert.deepEqual(c.sent, [{ type: "send", id: "a1", text: "hello there" }]);
+  assert.equal(c.sent.length, 1);
+  assert.equal(typeof c.sent[0].ref, "string");
+  assert.deepEqual(c.sent, [{ type: "send", id: "a1", text: "hello there", ref: c.sent[0].ref }]);
 });
 
 test("// sends text starting with a slash", async () => {
   const c = setup();
   await withChats(c);
-  await c.app.handleLine("/open 1");
-  c.sent.length = 0;
+  await openChat(c);
   await c.app.handleLine("//x");
-  assert.deepEqual(c.sent, [{ type: "send", id: "a1", text: "/x" }]);
+  assert.equal(c.sent.length, 1);
+  assert.equal(c.sent[0].text, "/x");
 });
 
 test("unknown command prints error and sends nothing", async () => {
@@ -113,9 +152,7 @@ test("empty line does nothing", async () => {
 test("not connected: list, open, and send print notice and send nothing", async () => {
   const c = setup();
   await withChats(c);
-  await c.app.handleLine("/open 1");
-  c.sent.length = 0;
-  c.lines.length = 0;
+  await openChat(c);
   c.state.connected = false;
   await c.app.handleLine("/list");
   await c.app.handleLine("/open 2");
@@ -155,8 +192,9 @@ test("messages for open conversation are printed", async () => {
       { from: "Alice", text: "one", ts: 1 },
       { from: "me", text: "two", ts: 2 },
     ],
+    title: "Alice",
   });
-  assert.deepEqual(c.lines, ["Alice: one", "me: two"]);
+  assert.deepEqual(c.lines, ["-- Alice --", "Alice: one", "me: two"]);
 });
 
 test("incoming for open conversation prints message line", async () => {
@@ -215,8 +253,7 @@ test("sent confirmation is printed", () => {
 test("rejected send prints error and does not throw", async () => {
   const c = setup({ queueFails: true });
   await withChats(c);
-  await c.app.handleLine("/open 1");
-  c.lines.length = 0;
+  await openChat(c);
   await c.app.handleLine("hello");
   assert.equal(c.lines.length, 1);
   assert.match(c.lines[0], /send failed.*boom/);
@@ -246,10 +283,10 @@ test("remote text is stripped of control chars in every field", async () => {
   c.lines.length = 0;
   await c.app.handleLine("/open 1");
   c.app.handleExtensionMessage({
-    type: "messages", id: "a1", messages: [{ from: EVIL, text: EVIL, ts: 1 }],
+    type: "messages", id: "a1", title: EVIL, messages: [{ from: EVIL, text: EVIL, ts: 1 }],
   });
   assertClean(c.lines);
-  assert.equal(c.lines.length, 1);
+  assert.equal(c.lines.length, 2);
   c.lines.length = 0;
   c.app.handleExtensionMessage({
     type: "incoming", id: "a1", name: EVIL, message: { from: EVIL, text: EVIL, ts: 1 },
@@ -295,4 +332,145 @@ test("bad chats payload leaves previous chat list intact", async () => {
   c.sent.length = 0;
   await c.app.handleLine("/open 2");
   assert.deepEqual(c.sent, [{ type: "open", id: "b2" }]);
+});
+
+// ---- final-review fix wave ---------------------------------------------------------
+
+test("C1: replies are refused until the extension confirms the open with messages", async () => {
+  const c = setup();
+  await withChats(c);
+  await c.app.handleLine("/open 2");
+  c.sent.length = 0;
+  c.lines.length = 0;
+  await c.app.handleLine("hello");
+  assert.deepEqual(c.sent, []);
+  assert.equal(c.lines.length, 1);
+  assert.match(c.lines[0], /^still opening/);
+  // A messages reply for some other chat does not confirm it.
+  c.app.handleExtensionMessage({ type: "messages", id: "a1", title: "Alice", messages: [] });
+  await c.app.handleLine("hello");
+  assert.deepEqual(c.sent, []);
+  c.app.handleExtensionMessage({ type: "messages", id: "b2", title: "Bob", messages: [] });
+  await c.app.handleLine("hello");
+  assert.equal(c.sent.length, 1);
+  assert.equal(c.sent[0].id, "b2");
+});
+
+test("C1: a new /open un-confirms until its own messages arrive", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c, 1);
+  await c.app.handleLine("/open 2");
+  c.sent.length = 0;
+  await c.app.handleLine("hello");
+  assert.deepEqual(c.sent, []);
+});
+
+test("C1: messages header shows the chat pane title, with a fallback", async () => {
+  const c = setup();
+  await withChats(c);
+  await c.app.handleLine("/open 1");
+  c.lines.length = 0;
+  c.app.handleExtensionMessage({ type: "messages", id: "a1", title: "Someone Else", messages: [] });
+  assert.deepEqual(c.lines, ["-- Someone Else --"]);
+  c.lines.length = 0;
+  c.app.handleExtensionMessage({ type: "messages", id: "a1", messages: [] });
+  assert.deepEqual(c.lines, ["-- (title unreadable) --"]);
+});
+
+test("I1: sent with the matching ref names the message", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c);
+  await c.app.handleLine("hello there");
+  c.app.handleExtensionMessage({ type: "sent", id: "a1", ref: c.sent[0].ref });
+  assert.deepEqual(c.lines, ['sent: "hello there"']);
+  assert.equal(c.timers.live().length, 0);
+});
+
+test("I1: error with the matching ref is reported as not sent", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c);
+  await c.app.handleLine("hello");
+  c.app.handleExtensionMessage({ type: "error", message: "tab gone", ref: c.sent[0].ref });
+  assert.deepEqual(c.lines, ['not sent: "hello": tab gone']);
+});
+
+test("I1: an unconfirmed error says to check with /open before resending", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c, 2);
+  await c.app.handleLine("hello");
+  c.app.handleExtensionMessage({ type: "error", message: "x", unconfirmed: true, ref: c.sent[0].ref });
+  assert.deepEqual(c.lines, ['no confirmation for "hello"; run /open 2 to check before resending']);
+});
+
+test("I1: snippets are cut at 30 characters", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c);
+  const long = "abcdefghijklmnopqrstuvwxyz0123456789";
+  await c.app.handleLine(long);
+  c.app.handleExtensionMessage({ type: "sent", id: "a1", ref: c.sent[0].ref });
+  assert.deepEqual(c.lines, ['sent: "abcdefghijklmnopqrstuvwxyz0123…"']);
+});
+
+test("I1: no reply within the timeout prints a no-confirmation line once", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c);
+  await c.app.handleLine("hello");
+  assert.equal(c.timers.live().length, 1);
+  assert.equal(c.timers.live()[0].ms, 20000);
+  c.timers.fireAll();
+  assert.deepEqual(c.lines, ['no confirmation for "hello"; run /open 1 to check before resending']);
+  // A late reply is still shown, but not as a pending send.
+  c.lines.length = 0;
+  c.app.handleExtensionMessage({ type: "sent", id: "a1", ref: c.sent[0].ref });
+  assert.deepEqual(c.lines, ["sent"]);
+});
+
+test("I1: extension disconnect reports every pending send as unconfirmed", async () => {
+  const c = setup();
+  await withChats(c);
+  await openChat(c);
+  await c.app.handleLine("one");
+  await c.app.handleLine("two");
+  c.app.handleStatus(false);
+  assert.deepEqual(c.lines, [
+    'no confirmation for "one"; run /open 1 to check before resending',
+    'no confirmation for "two"; run /open 1 to check before resending',
+  ]);
+  assert.equal(c.timers.live().length, 0);
+  c.lines.length = 0;
+  c.app.handleStatus(false);
+  assert.deepEqual(c.lines, []);
+});
+
+test("I1: a failed enqueue names the message and leaves nothing pending", async () => {
+  const c = setup({ queueFails: true });
+  await withChats(c);
+  await openChat(c);
+  await c.app.handleLine("hello");
+  assert.deepEqual(c.lines, ['send failed: "hello": boom']);
+  assert.equal(c.timers.live().length, 0);
+});
+
+test("I1: createBridgeSender throws when the extension is not connected at send time", async () => {
+  const sent = [];
+  const bridge = { isConnected: () => false, send: (m) => sent.push(m) };
+  const send = createBridgeSender(bridge);
+  await assert.rejects(send({ id: "a1", text: "hi", ref: "s1" }), /not connected/);
+  assert.deepEqual(sent, []);
+  bridge.isConnected = () => true;
+  await send({ id: "a1", text: "hi", ref: "s1" });
+  assert.deepEqual(sent, [{ type: "send", id: "a1", text: "hi", ref: "s1" }]);
+});
+
+test("bidi control characters are stripped from remote text", () => {
+  const c = setup();
+  c.app.handleExtensionMessage({ type: "error", message: "a\u202eb\u2066c\u2069d\u202a" });
+  assert.equal(c.lines.length, 1);
+  assert.doesNotMatch(c.lines[0], /[\u202a-\u202e\u2066-\u2069]/);
 });

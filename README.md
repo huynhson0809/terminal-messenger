@@ -6,11 +6,13 @@ Nothing logs in to Facebook for you: the terminal app talks only to the extensio
 
 ## Setup
 
-1. Install dependencies: `npm install` (needs Node.js).
+1. Install dependencies: `npm install` (needs Node.js 20 or newer).
 2. Run `npm start`. On first run it prints `Pairing token: ...`; copy that token. It is stored in `~/.terminal-messenger/token` and reused on later runs.
 3. In Chrome, open `chrome://extensions`, turn on Developer mode, click "Load unpacked" and choose the `extension/` folder.
 4. Click the extension's icon, paste the token into the popup and press Save. The popup shows "connected" and the terminal prints `extension connected`.
-5. Open `https://www.facebook.com/messages/` and pin the tab. Put it in a separate Chrome window that you minimize or move to another desktop. The tab has to stay open.
+5. Open `https://www.facebook.com/messages/` and pin the tab. Put it in a separate Chrome window that you minimize or move to another desktop. The tab has to stay open. If the Messenger tab was already open before you loaded (or reloaded) the extension, reload the tab: Chrome doesn't add the extension to tabs that were already open.
+
+Lost the token? Print it with `cat ~/.terminal-messenger/token`. To get a new one, delete that file and restart `npm start`, then paste the new token in the popup.
 
 ## Commands
 
@@ -20,6 +22,11 @@ Nothing logs in to Facebook for you: the terminal app talks only to the extensio
 - `/quit` exits.
 - Any other text sends a reply to the open conversation. A line starting with a single `/` is treated as a command.
 - `//text` sends a message that starts with a slash (it sends `/text`).
+- One message per line. If you paste several lines at once, none of them is sent and the terminal prints `pasted N lines; not sent, send one line at a time`.
+
+After `/open`, the app prints a `-- Name --` header with the name shown in the Facebook tab. Check that it matches the chat you picked. Replies are refused (`still opening ...`) until that header and the messages have arrived.
+
+Each reply is confirmed by name: `sent: "first words…"`, or `not sent: "first words…": reason`. If no confirmation comes back within 20 seconds, or the extension disconnects, you see `no confirmation for "..."; run /open <n> to check before resending`. Do that before typing the message again, so it doesn't go out twice.
 
 New messages ring the terminal bell. A message in the open chat is printed as it arrives; one in another chat is printed as `[new] Name: ...`.
 
@@ -27,7 +34,7 @@ New messages ring the terminal bell. A message in the open chat is printed as it
 
 1. `/list`: names and previews look right.
 2. `/open 1`: recent messages show, with your own as "you".
-3. Send "test" to yourself or to a friend who agreed. It should arrive once and the terminal prints `sent`.
+3. Send "test" to yourself or to a friend who agreed. It should arrive once and the terminal prints `sent: "test"`.
 4. Have them message you back. It should print with a bell and only once.
 
 If a step reports an error such as "can't read the page", see Known limits.
@@ -49,3 +56,5 @@ If a step reports an error such as "can't read the page", see Known limits.
 ## Safety design
 
 The app listens on `127.0.0.1:8765` only, and the extension may connect only to that address. Connections need the random pairing token. The extension does not read cookies. Nothing is sent until you press Enter on a line, messages go out at least 1 second apart, and a failed send is not retried.
+
+Know this: the token only proves the extension to the app, not the other way round. The extension sends the token in clear to whatever is listening on `127.0.0.1:8765` and obeys any `list`, `open` or `send` it receives from there. So if another program on this computer takes port 8765 while the app is not running, it could read your chats and send messages as you. Keep the app running whenever a token is saved in the extension, or press "Clear token" in the popup when you're not using it (paste it again later).

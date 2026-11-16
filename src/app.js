@@ -1,9 +1,10 @@
 import { parseCommand } from "./commands.js";
 import { renderChats, renderMessage } from "./render.js";
 
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 
-// Remote text is untrusted: neutralize ESC, newlines, bell and other control chars.
+// Remote text is untrusted: neutralize ESC, newlines, bell, other control
+// chars and bidi overrides (which can visually reorder a line).
 function clean(v) {
   return String(v ?? "").replace(CONTROL_RE, " ");
 }
@@ -19,12 +20,54 @@ function cleanMessage(m) {
 }
 
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
+const CONFIRM_TIMEOUT_MS = 20000;
+const SNIPPET_LEN = 30;
+
+function snippet(text) {
+  const t = clean(text);
+  return t.length > SNIPPET_LEN ? t.slice(0, SNIPPET_LEN) + "…" : t;
+}
+
+// The queue's send function. Checks the connection at send time (not only at
+// enqueue time) so a dropped extension is reported instead of a silent no-op.
+export function createBridgeSender(bridge) {
+  return async ({ id, text, ref }) => {
+    if (!bridge.isConnected()) throw new Error("extension not connected");
+    bridge.send({ type: "send", id, text, ref });
+  };
+}
 
 // Pure app logic: no I/O of its own. `bridge` needs {send, isConnected},
 // `queue` needs {enqueue(item)}, `print` receives one output line at a time.
-export function createApp({ bridge, print, queue, onQuit = () => {} }) {
+export function createApp({
+  bridge,
+  print,
+  queue,
+  onQuit = () => {},
+  confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+}) {
   let chats = [];
-  let open = null; // { id, name }
+  // { id, name, confirmed }: confirmed only once the extension's `messages`
+  // reply for this id arrives, so replies can't go out while the tab is
+  // still switching chats.
+  let open = null;
+  // ref -> { snip, n, timer }: sends waiting for `sent` / `error`.
+  const pending = new Map();
+  let refCounter = 0;
+
+  function noConfirmation(p) {
+    return `no confirmation for "${p.snip}"; run /open ${p.n} to check before resending`;
+  }
+
+  function settle(ref) {
+    const p = pending.get(ref);
+    if (!p) return null;
+    pending.delete(ref);
+    if (p.timer !== null) clearTimer(p.timer);
+    return p;
+  }
 
   function requireConnection() {
     if (bridge.isConnected()) return true;
@@ -58,7 +101,7 @@ export function createApp({ bridge, print, queue, onQuit = () => {} }) {
           print(`error: no conversation ${cmd.n} (run /list first)`);
           return;
         }
-        open = { id: chat.id, name: chat.name };
+        open = { id: chat.id, name: chat.name, confirmed: false };
         bridge.send({ type: "open", id: chat.id });
         return;
       }
@@ -67,11 +110,27 @@ export function createApp({ bridge, print, queue, onQuit = () => {} }) {
           print("open a conversation first");
           return;
         }
+        if (!open.confirmed) {
+          print(`still opening ${clean(open.name)}; wait for its messages before replying`);
+          return;
+        }
         if (!requireConnection()) return;
+        const ref = `s${++refCounter}`;
+        const index = chats.findIndex((c) => c.id === open.id);
+        const p = { snip: snippet(cmd.text), n: index === -1 ? "<n>" : index + 1, timer: null };
+        pending.set(ref, p);
         try {
-          await queue.enqueue({ id: open.id, text: cmd.text });
+          await queue.enqueue({ id: open.id, text: cmd.text, ref });
         } catch (err) {
-          print(`send failed: ${err?.message ?? err}`);
+          settle(ref);
+          print(`send failed: "${p.snip}": ${err?.message ?? err}`);
+          return;
+        }
+        // The reply may already have arrived; only time out a still-pending send.
+        if (pending.get(ref) === p) {
+          p.timer = setTimer(() => {
+            if (settle(ref)) print(noConfirmation(p));
+          }, confirmTimeoutMs);
         }
         return;
       }
@@ -100,6 +159,9 @@ export function createApp({ bridge, print, queue, onQuit = () => {} }) {
         if (!open || msg.id !== open.id) return;
         if (!Array.isArray(msg.messages)) throw new Error("messages not an array");
         const lines = msg.messages.map((m) => renderMessage(cleanMessage(m)));
+        open.confirmed = true;
+        // The tab's own pane title, to cross-check against the /list name.
+        print(`-- ${clean(msg.title).trim() || "(title unreadable)"} --`);
         for (const l of lines) print(l);
         return;
       }
@@ -109,14 +171,29 @@ export function createApp({ bridge, print, queue, onQuit = () => {} }) {
         else print(`[new] ${renderMessage(m, clean(msg.name) || undefined)}`);
         return;
       }
-      case "sent":
-        print("sent");
+      case "sent": {
+        const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
+        print(p ? `sent: "${p.snip}"` : "sent");
         return;
-      case "error":
-        print(`error: ${clean(msg.message)}`);
+      }
+      case "error": {
+        const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
+        if (!p) print(`error: ${clean(msg.message)}`);
+        else if (msg.unconfirmed === true) print(noConfirmation(p));
+        else print(`not sent: "${p.snip}": ${clean(msg.message)}`);
         return;
+      }
     }
   }
 
-  return { handleLine, handleExtensionMessage };
+  // Bridge status. On disconnect, every pending send's fate is unknown.
+  function handleStatus(up) {
+    if (up) return;
+    for (const ref of [...pending.keys()]) {
+      const p = settle(ref);
+      if (p) print(noConfirmation(p));
+    }
+  }
+
+  return { handleLine, handleExtensionMessage, handleStatus };
 }

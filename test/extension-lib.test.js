@@ -579,3 +579,217 @@ test("a photo someone sends produces an incoming message; my own photo does not"
   );
   assert.deepEqual(lib.incomingOnly(lib.newMessagesSince(before, after)), [{ from: "Bob", text: "[image]" }]);
 });
+
+// ---- final-review fix wave ---------------------------------------------------------
+
+test("validateCommand passes an optional send ref through and rejects a bad one", () => {
+  assert.deepEqual(lib.validateCommand({ type: "send", id: "5", text: "hi", ref: "s12" }), {
+    ok: true,
+    cmd: { type: "send", id: "5", text: "hi", ref: "s12" },
+  });
+  assert.equal(lib.validateCommand({ type: "send", id: "5", text: "hi", ref: "bad ref!" }).ok, false);
+  assert.equal(lib.validateCommand({ type: "send", id: "5", text: "hi", ref: 7 }).ok, false);
+});
+
+test("withRef echoes a ref onto a reply only when there is one", () => {
+  assert.deepEqual(lib.withRef({ type: "sent", id: "5" }, "s1"), { type: "sent", id: "5", ref: "s1" });
+  assert.deepEqual(lib.withRef({ type: "error", message: "x" }, undefined), { type: "error", message: "x" });
+});
+
+test("buildMessages includes the pane title when given", () => {
+  assert.equal(lib.buildMessages("7", [], "  Bob \n").title, "Bob");
+  assert.equal("title" in lib.buildMessages("7", []), false);
+});
+
+test("countThreadIds counts distinct thread ids among hrefs (ambiguous row detection)", () => {
+  assert.equal(lib.countThreadIds(["/messages/t/1/", "/messages/t/1/?x", "/settings"]), 1);
+  assert.equal(lib.countThreadIds(["/messages/t/1/", "/messages/e2ee/t/2/"]), 2);
+  assert.equal(lib.countThreadIds([]), 0);
+});
+
+test("waitForQuiet resolves true after quietMs with no changes, restarting on each change", async () => {
+  const timers = [];
+  let cb = null;
+  const env = {
+    subscribe: (fn) => {
+      cb = fn;
+      return () => {
+        cb = null;
+      };
+    },
+    setTimer: (fn, ms) => {
+      const t = { fn, ms, live: true };
+      timers.push(t);
+      return t;
+    },
+    clearTimer: (t) => {
+      t.live = false;
+    },
+  };
+  const p = lib.waitForQuiet({ quietMs: 300, maxMs: 3000, ...env });
+  const quiet = () => timers.filter((t) => t.live && t.ms === 300);
+  assert.equal(quiet().length, 1);
+  cb(); // a mutation restarts the quiet timer
+  assert.equal(quiet().length, 1);
+  quiet()[0].fn();
+  assert.equal(await p, true);
+  assert.equal(cb, null);
+});
+
+test("waitForQuiet resolves false when the page never goes quiet before maxMs", async () => {
+  const timers = [];
+  const env = {
+    subscribe: () => () => {},
+    setTimer: (fn, ms) => {
+      const t = { fn, ms, live: true };
+      timers.push(t);
+      return t;
+    },
+    clearTimer: (t) => {
+      t.live = false;
+    },
+  };
+  const p = lib.waitForQuiet({ quietMs: 300, maxMs: 3000, ...env });
+  timers.find((t) => t.ms === 3000).fn();
+  assert.equal(await p, false);
+});
+
+// performSend: the whole send-safety sequence, against a fake page.
+function fakePage({ path = "/messages/t/55/", settled = true, composers = 1, clearsOnEnter = true } = {}) {
+  const boxes = Array.from({ length: composers }, () => ({ text: "", attached: true }));
+  const page = {
+    path,
+    settled,
+    boxes,
+    enters: 0,
+    inserted: [],
+    focused: null,
+    onGateWait: null,
+    afterEnter: null,
+    pathname: () => page.path,
+    isSettled: (id) => page.settled && lib.threadIdFromPath(page.path) === id,
+    findComposers: () => page.boxes.filter((b) => b.attached),
+    textOf: (b) => b.text,
+    focus: (b) => {
+      page.focused = b;
+    },
+    isFocused: (b) => page.focused === b,
+    isAttached: (b) => b.attached,
+    insertText: (b, t) => {
+      page.inserted.push(t);
+      b.text += t;
+    },
+    pressEnter: (b) => {
+      page.enters++;
+      if (page.afterEnter) page.afterEnter(b);
+      else if (clearsOnEnter) b.text = "";
+    },
+    waitFor: async (pred) => Boolean(pred()),
+  };
+  return page;
+}
+
+function fakeGate(page) {
+  const g = {
+    waits: 0,
+    marks: 0,
+    waitTurn: async () => {
+      g.waits++;
+      if (page.onGateWait) page.onGateWait();
+    },
+    markSent: () => {
+      g.marks++;
+    },
+  };
+  return g;
+}
+
+test("performSend happy path: types once, presses Enter exactly once, replies sent", async () => {
+  const page = fakePage();
+  const gate = fakeGate(page);
+  const r = await lib.performSend({ id: "55", text: "  hello ", page, gate });
+  assert.deepEqual(r, { type: "sent", id: "55" });
+  assert.deepEqual(page.inserted, ["hello"]);
+  assert.equal(page.enters, 1);
+  assert.equal(gate.waits, 1);
+  assert.equal(gate.marks, 1);
+});
+
+test("performSend refuses during the settle window, typing nothing", async () => {
+  const page = fakePage({ settled: false });
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.deepEqual(r, { type: "error", message: "conversation still loading; not sent" });
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.enters, 0);
+});
+
+test("performSend refuses on URL mismatch, typing nothing", async () => {
+  const page = fakePage({ path: "/messages/t/66/" });
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.match(r.message, /different conversation/);
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.enters, 0);
+});
+
+test("performSend refuses when the composer already has text", async () => {
+  const page = fakePage();
+  page.boxes[0].text = "my draft";
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.match(r.message, /not empty/);
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.enters, 0);
+});
+
+test("performSend refuses with the layout error unless exactly one composer matches", async () => {
+  for (const n of [0, 2]) {
+    const page = fakePage({ composers: n });
+    const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+    assert.deepEqual(r, { type: "error", message: lib.LAYOUT_ERROR }, `composers ${n}`);
+    assert.deepEqual(page.inserted, []);
+  }
+});
+
+test("performSend re-checks after the send-gap wait: a chat switch during the wait types nothing", async () => {
+  const page = fakePage();
+  page.onGateWait = () => {
+    page.path = "/messages/t/66/";
+  };
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.enters, 0);
+});
+
+test("performSend does not press Enter if the typed text doesn't match", async () => {
+  const page = fakePage();
+  page.insertText = (b, t) => {
+    b.text = t.slice(0, 2);
+  };
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.equal(page.enters, 0);
+});
+
+test("performSend: unconfirmed send is reported, never retried", async () => {
+  const page = fakePage({ clearsOnEnter: false });
+  const gate = fakeGate(page);
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate });
+  assert.equal(r.type, "error");
+  assert.equal(r.unconfirmed, true);
+  assert.match(r.message, /run \/open <n> to check before resending/);
+  assert.equal(page.enters, 1);
+  assert.equal(gate.marks, 1);
+});
+
+test("performSend: an empty box in a different chat does not count as sent", async () => {
+  const page = fakePage();
+  page.afterEnter = (b) => {
+    page.path = "/messages/t/66/";
+    b.text = "";
+  };
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.equal(r.unconfirmed, true);
+  assert.equal(page.enters, 1);
+});

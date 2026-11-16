@@ -67,8 +67,10 @@
   globalThis.__terminalMessengerLoaded = true;
 
   const lib = globalThis.TMLib;
-  const { LIMITS, LAYOUT_ERROR } = lib;
+  const { LAYOUT_ERROR } = lib;
   const OPEN_TIMEOUT_MS = 10000;
+  const OPEN_QUIET_MS = 300;
+  const OPEN_QUIET_MAX_MS = 3000;
   const TYPE_TIMEOUT_MS = 1500;
   const SETTLE_AFTER_THREAD_CHANGE_MS = 2500;
   const SCAN_THROTTLE_MS = 500;
@@ -104,9 +106,9 @@
     return all.filter((el) => !all.some((o) => o !== el && el.contains(o)));
   }
 
-  function domChanges(cb) {
+  function domChanges(cb, target = document.documentElement) {
     const obs = new MutationObserver(cb);
-    obs.observe(document.documentElement, {
+    obs.observe(target, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -134,7 +136,13 @@
       const id = lib.threadIdFromPath(link.getAttribute("href") || "");
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      const row = link.closest(SELECTORS.chatRowContainer) || link;
+      // If the "row" container wraps more than one chat (selector too broad),
+      // fall back to the link itself rather than borrowing another row's name.
+      let row = link.closest(SELECTORS.chatRowContainer) || link;
+      if (row !== link) {
+        const hrefs = Array.from(row.querySelectorAll(SELECTORS.chatRowLink), (a) => a.getAttribute("href") || "");
+        if (lib.countThreadIds(hrefs) > 1) row = link;
+      }
       const texts = [];
       let unread = Boolean(row.querySelector(SELECTORS.chatRowUnread));
       for (const span of innermost(row, SELECTORS.chatRowText)) {
@@ -201,26 +209,52 @@
     return { type: "chats", chats: readChats() };
   }
 
+  // Identifies what the message list currently shows, so /open can tell the
+  // new chat's content apart from the previous chat's still-rendered list.
+  function listSignature(list) {
+    if (!list) return null;
+    const rows = list.querySelectorAll(SELECTORS.messageRow);
+    const last = rows.length ? textOf(rows[rows.length - 1]) : "";
+    return `${rows.length}|${last}`;
+  }
+
   async function handleOpen(id) {
-    if (currentThreadId() !== id) {
+    const alreadyOpen = currentThreadId() === id;
+    const prevList = first(SELECTORS.messageList);
+    const prevSig = listSignature(prevList);
+    if (!alreadyOpen) {
       const row = readChatRows().find((r) => r.chat.id === id);
       if (!row) return lib.errorMsg("conversation not found in the Messenger tab's list, run /list again");
       // The one click this extension ever makes: the chat row the terminal asked to open.
       row.link.click();
     }
-    const ready = await waitForDom(
-      () => currentThreadId() === id && first(SELECTORS.messageList) !== null,
-      OPEN_TIMEOUT_MS,
-    );
+    // The URL alone is not enough: the previous chat's list is still on the
+    // page for a moment. Require a different list element or changed content.
+    const ready = await waitForDom(() => {
+      if (currentThreadId() !== id) return false;
+      const list = first(SELECTORS.messageList);
+      if (!list) return false;
+      if (alreadyOpen || prevList === null) return true;
+      return list !== prevList || listSignature(list) !== prevSig;
+    }, OPEN_TIMEOUT_MS);
     if (!ready) {
-      return currentThreadId() === id ? lib.errorMsg(LAYOUT_ERROR) : lib.errorMsg("couldn't open that conversation");
+      return currentThreadId() === id
+        ? lib.errorMsg("conversation didn't finish loading; try /open again")
+        : lib.errorMsg("couldn't open that conversation");
     }
-    // Give the thread a moment to render its rows (resolves early once text shows).
-    await waitForDom(() => readThreadMessages("").length > 0, 1500);
+    // Then let it finish rendering: ~300 ms with no changes in the list.
+    const list = first(SELECTORS.messageList);
+    await lib.waitForQuiet({
+      quietMs: OPEN_QUIET_MS,
+      maxMs: OPEN_QUIET_MAX_MS,
+      subscribe: (cb) => domChanges(cb, list || document.documentElement),
+    });
+    if (currentThreadId() !== id) return lib.errorMsg("couldn't open that conversation");
     const name = threadName(id);
     const messages = readThreadMessages(name);
     resetBaseline(id, messages);
-    return lib.buildMessages(id, messages);
+    // The pane's own title (not the list name), so a mismatch is visible.
+    return lib.buildMessages(id, messages, textOf(first(SELECTORS.threadTitle)));
   }
 
   function composerFocused(composer) {
@@ -244,62 +278,32 @@
     el.dispatchEvent(new KeyboardEvent("keyup", init));
   }
 
-  async function handleSend(id, rawText) {
-    // 1. Guard: the open thread must be the requested one, text must be sane.
-    const guard = lib.canSend(location.pathname, id, rawText);
-    if (!guard.ok) return lib.errorMsg(guard.error);
-    const text = guard.text;
+  // Real-page adapter for lib.performSend, which holds the whole send-safety
+  // sequence (and is unit-tested against a fake of this adapter).
+  const page = {
+    pathname: () => location.pathname,
+    isSettled: (id) => baseline.threadId === id && Date.now() >= baseline.settleUntil,
+    findComposers: () => Array.from(document.querySelectorAll(SELECTORS.composer)),
+    textOf: (box) => box.textContent,
+    focus: (box) => box.focus(),
+    isFocused: composerFocused,
+    isAttached: (box) => box.isConnected,
+    insertText: (box, text) => document.execCommand("insertText", false, text),
+    pressEnter,
+    waitFor: waitForDom,
+  };
 
-    const composer = document.querySelector(SELECTORS.composer);
-    if (!composer) return lib.errorMsg(LAYOUT_ERROR);
-    // Never mix our text into something the user is typing in the tab.
-    if (!lib.composerIsEmpty(composer.textContent)) {
-      return lib.errorMsg("the message box in the Messenger tab is not empty; not sent");
-    }
-
-    // 2. Keep at least 1 s between Enter presses, even when this send was
-    //    queued behind a slow open/confirm. Then re-check everything: the
-    //    page may have changed while we waited.
-    await sendGate.waitTurn();
-    const afterWait = lib.canSend(location.pathname, id, text);
-    if (!afterWait.ok) return lib.errorMsg(afterWait.error);
-    if (!composer.isConnected || !lib.composerIsEmpty(composer.textContent)) {
-      return lib.errorMsg("the message box in the Messenger tab changed; not sent");
-    }
-
-    // 3. Type it into the real composer.
-    composer.focus();
-    if (!composerFocused(composer)) return lib.errorMsg("couldn't focus the message box; not sent");
-    document.execCommand("insertText", false, text);
-    const typed = await waitForDom(() => lib.composerMatches(composer.textContent, text), TYPE_TIMEOUT_MS);
-    if (!typed) {
-      return lib.errorMsg(
-        "couldn't type the message correctly; not sent (check the Messenger tab, the text may be in the box)",
-      );
-    }
-
-    // 4. Re-check right before Enter: still the same thread, still focused.
-    const again = lib.canSend(location.pathname, id, text);
-    if (!again.ok) return lib.errorMsg(`${again.error} (the text is still in the message box)`);
-    if (!composer.isConnected || !composerFocused(composer)) {
-      return lib.errorMsg("the message box lost focus; not sent (the text is still in the box)");
-    }
-
-    // 5. Press Enter once and wait for the box to clear. Never retry.
-    sendGate.markSent(); // start-to-start: recorded as Enter is pressed
-    pressEnter(composer);
-    const cleared = await waitForDom(() => {
-      const box = document.querySelector(SELECTORS.composer);
-      return box !== null && lib.composerIsEmpty(box.textContent);
-    }, LIMITS.SEND_CONFIRM_TIMEOUT_MS);
-    if (!cleared) {
-      return lib.errorMsg("send not confirmed after 5 s; not retrying, check the Messenger tab");
-    }
-    recentSent.add(text);
-    return { type: "sent", id };
+  async function handleSend(id, text) {
+    const reply = await lib.performSend({ id, text, page, gate: sendGate, typeTimeoutMs: TYPE_TIMEOUT_MS });
+    if (reply.type === "sent") recentSent.add(text);
+    return reply;
   }
 
   async function handleCommand(cmd) {
+    return lib.withRef(await runCommand(cmd), cmd.ref);
+  }
+
+  async function runCommand(cmd) {
     try {
       switch (cmd.type) {
         case "list":
@@ -324,7 +328,7 @@
     if (sender.id !== chrome.runtime.id || !msg || msg.kind !== "command") return false;
     const v = lib.validateCommand(msg.cmd);
     if (!v.ok) {
-      sendResponse(lib.errorMsg(v.error));
+      sendResponse(lib.withRef(lib.errorMsg(v.error), lib.isValidRef(msg.cmd && msg.cmd.ref) ? msg.cmd.ref : undefined));
       return false;
     }
     runSerial(() => handleCommand(v.cmd)).then(sendResponse, () =>

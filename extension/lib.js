@@ -39,6 +39,12 @@
   const THREAD_PATH_RE = /^\/(?:messages\/)?(?:e2ee\/)?t\/([^/]+)\/?$/;
   const ZERO_WIDTH_RE = /[​-‍⁠﻿]/g;
 
+  const REF_RE = /^[A-Za-z0-9_-]{1,40}$/;
+
+  function isValidRef(ref) {
+    return typeof ref === "string" && REF_RE.test(ref);
+  }
+
   function isValidId(id) {
     return typeof id === "string" && ID_RE.test(id);
   }
@@ -147,9 +153,29 @@
     return out;
   }
 
-  function buildMessages(id, messages) {
+  // title: the chat pane's own heading, so the terminal can show it and the
+  // user can cross-check it against the name they picked from /list.
+  function buildMessages(id, messages, title) {
     const list = (messages || []).slice(-LIMITS.MAX_MESSAGES).map(buildMessage);
-    return { type: "messages", id, messages: list };
+    const out = { type: "messages", id, messages: list };
+    if (title !== undefined) out.title = cleanText(title, LIMITS.MAX_NAME_LEN);
+    return out;
+  }
+
+  // A reply belongs to a terminal send via its `ref`.
+  function withRef(msg, ref) {
+    return typeof ref === "string" ? { ...msg, ref } : msg;
+  }
+
+  // Number of distinct thread ids among the hrefs. A chat-row container with
+  // more than one is ambiguous (it wraps several rows).
+  function countThreadIds(hrefs) {
+    const ids = new Set();
+    for (const h of hrefs || []) {
+      const id = threadIdFromPath(h);
+      if (id) ids.add(id);
+    }
+    return ids.size;
   }
 
   function errorMsg(message) {
@@ -219,7 +245,13 @@
         if (msg.text.length > LIMITS.MAX_SEND_LEN) {
           return { ok: false, error: `message too long (max ${LIMITS.MAX_SEND_LEN} characters)` };
         }
-        return { ok: true, cmd: { type: "send", id: msg.id, text: msg.text } };
+        if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
+        return {
+          ok: true,
+          cmd: msg.ref === undefined
+            ? { type: "send", id: msg.id, text: msg.text }
+            : { type: "send", id: msg.id, text: msg.text, ref: msg.ref },
+        };
       default:
         return { ok: false, error: "unknown command" };
     }
@@ -306,6 +338,115 @@
     };
   }
 
+  // Resolves true once quietMs pass with no notification from subscribe(cb),
+  // or false if that never happens within maxMs. Used after opening a chat
+  // so the thread has finished rendering before it is read.
+  function waitForQuiet(opts) {
+    const { quietMs, maxMs, subscribe, setTimer = setTimeout, clearTimer = clearTimeout } = opts;
+    return new Promise((resolve) => {
+      let done = false;
+      let quietTimer = null;
+      let unsubscribe = null;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        if (quietTimer !== null) clearTimer(quietTimer);
+        clearTimer(maxTimer);
+        if (unsubscribe) unsubscribe();
+        resolve(value);
+      };
+      const restart = () => {
+        if (done) return;
+        if (quietTimer !== null) clearTimer(quietTimer);
+        quietTimer = setTimer(() => finish(true), quietMs);
+      };
+      const maxTimer = setTimer(() => finish(false), maxMs);
+      restart();
+      unsubscribe = subscribe(restart);
+    });
+  }
+
+  const SEND_ERRORS = Object.freeze({
+    loading: "conversation still loading; not sent",
+    notEmpty: "the message box in the Messenger tab is not empty; not sent",
+    changed: "the message box in the Messenger tab changed; not sent",
+    focus: "couldn't focus the message box; not sent",
+    typing: "couldn't type the message correctly; not sent (the text may still be in the message box)",
+    lostFocus: "the message box lost focus; not sent (the text is still in the box)",
+    unconfirmed: "send not confirmed after 5 s; not retrying, run /open <n> to check before resending",
+  });
+
+  // The whole send-safety sequence, written against a small page adapter so
+  // it can be tested without a browser. content.js supplies the real one.
+  //   page: pathname(), isSettled(id), findComposers(), textOf(box),
+  //         focus(box), isFocused(box), isAttached(box), insertText(box, text),
+  //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>
+  //   gate: waitTurn(), markSent()   (createSendGate)
+  // Every refusal happens before Enter. Enter is pressed at most once.
+  async function performSend({
+    id,
+    text: rawText,
+    page,
+    gate,
+    typeTimeoutMs = 1500,
+    confirmTimeoutMs = LIMITS.SEND_CONFIRM_TIMEOUT_MS,
+  }) {
+    const err = (message) => errorMsg(message);
+    // Thread, settle window, a single empty composer. Returns the box or an error.
+    const check = (expectedBox) => {
+      const g = canSend(page.pathname(), id, rawText);
+      if (!g.ok) return { error: g.error };
+      if (!page.isSettled(id)) return { error: SEND_ERRORS.loading };
+      const boxes = page.findComposers();
+      if (boxes.length !== 1) return { error: LAYOUT_ERROR };
+      const box = boxes[0];
+      if (expectedBox && box !== expectedBox) return { error: SEND_ERRORS.changed };
+      if (!composerIsEmpty(page.textOf(box))) {
+        return { error: expectedBox ? SEND_ERRORS.changed : SEND_ERRORS.notEmpty };
+      }
+      return { box, text: g.text };
+    };
+
+    // 1. Before anything: right thread, loaded, one empty composer.
+    const initial = check(null);
+    if (initial.error) return err(initial.error);
+
+    // 2. Keep >= 1 s between Enter presses, then re-check: the page may have
+    //    changed while we waited.
+    await gate.waitTurn();
+    const second = check(initial.box);
+    if (second.error) return err(second.error);
+    const box = second.box;
+    const text = second.text;
+
+    // 3. Type into the real composer and verify exactly that text landed.
+    page.focus(box);
+    if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
+    page.insertText(box, text);
+    const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
+    if (!typed) return err(SEND_ERRORS.typing);
+
+    // 4. Last re-check right before Enter.
+    const g = canSend(page.pathname(), id, text);
+    if (!g.ok) return err(`${g.error} (the text is still in the message box)`);
+    if (!page.isSettled(id)) return err(`${SEND_ERRORS.loading} (the text is still in the message box)`);
+    const boxes = page.findComposers();
+    if (boxes.length !== 1 || boxes[0] !== box || !page.isAttached(box) || !page.isFocused(box)) {
+      return err(SEND_ERRORS.lostFocus);
+    }
+
+    // 5. One Enter. Then wait for this chat's box to clear. Never retry.
+    gate.markSent(); // start-to-start gap: recorded as Enter is pressed
+    page.pressEnter(box);
+    const cleared = await page.waitFor(() => {
+      if (threadIdFromPath(page.pathname()) !== id) return false;
+      const now = page.findComposers();
+      return now.length === 1 && composerIsEmpty(page.textOf(now[0]));
+    }, confirmTimeoutMs);
+    if (!cleared) return { ...err(SEND_ERRORS.unconfirmed), unconfirmed: true };
+    return { type: "sent", id };
+  }
+
   // Milliseconds to wait so that at least minGapMs separates two Enter presses.
   function sendGapWait(lastSendAt, now, minGapMs = LIMITS.MIN_SEND_GAP_MS) {
     if (typeof lastSendAt !== "number") return 0;
@@ -363,6 +504,11 @@
     pickMessengerTab,
     waitFor,
     createSerialRunner,
+    withRef,
+    countThreadIds,
+    waitForQuiet,
+    performSend,
+    isValidRef,
     sendGapWait,
     createSendGate,
     mediaPlaceholder,

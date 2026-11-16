@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadOrCreateToken, startBridge } from "./bridge.js";
 import { createSendQueue } from "./sendQueue.js";
-import { createApp } from "./app.js";
+import { createApp, createBridgeSender } from "./app.js";
+import { burstMessage, createPasteGuard } from "./pasteGuard.js";
 import { needsNewToken } from "./token.js";
 
 const tokenPath = join(homedir(), ".terminal-messenger", "token");
@@ -15,23 +16,32 @@ if (firstRun) {
 }
 
 let app = null;
-const bridge = await startBridge({
-  token,
-  onMessage: (msg) => {
-    if (msg?.type === "incoming") process.stdout.write("\u0007");
-    try {
-      app?.handleExtensionMessage(msg);
-    } catch (err) {
-      console.log(`error: ${err.message}`);
-    }
-  },
-  onStatus: (up) =>
-    console.log(up ? "extension connected" : "extension disconnected"),
-});
+let bridge;
+try {
+  bridge = await startBridge({
+    token,
+    onMessage: (msg) => {
+      if (msg?.type === "incoming") process.stdout.write("\u0007");
+      try {
+        app?.handleExtensionMessage(msg);
+      } catch (err) {
+        console.log(`error: ${err.message}`);
+      }
+    },
+    onStatus: (up) => {
+      console.log(up ? "extension connected" : "extension disconnected");
+      app?.handleStatus(up);
+    },
+  });
+} catch (err) {
+  if (err?.code === "EADDRINUSE") {
+    console.error("port 8765 is in use (another terminal-messenger, or something else?)");
+    process.exit(1);
+  }
+  throw err;
+}
 
-const queue = createSendQueue(async ({ id, text }) => {
-  bridge.send({ type: "send", id, text });
-});
+const queue = createSendQueue(createBridgeSender(bridge));
 
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 let closing = false;
@@ -46,7 +56,13 @@ async function shutdown() {
 app = createApp({ bridge, print: (l) => console.log(l), queue, onQuit: shutdown });
 console.log("terminal-messenger ready: /list, /open <n>, /back, /quit");
 
-rl.on("line", (line) => {
-  app.handleLine(line).catch((err) => console.log(`error: ${err.message}`));
+// A multi-line paste arrives as several lines within milliseconds; refuse
+// the whole burst instead of sending one message per line.
+const pasteGuard = createPasteGuard({
+  onLine: (line) => {
+    app.handleLine(line).catch((err) => console.log(`error: ${err.message}`));
+  },
+  onBurst: (n) => console.log(burstMessage(n)),
 });
+rl.on("line", (line) => pasteGuard.push(line));
 rl.on("close", shutdown);

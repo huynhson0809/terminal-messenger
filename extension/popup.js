@@ -38,6 +38,13 @@ document.getElementById("save").addEventListener("click", async () => {
   setTimeout(refreshStatus, 1000);
 });
 
+document.getElementById("clear").addEventListener("click", async () => {
+  await chrome.storage.local.remove("token");
+  input.value = "";
+  noteEl.textContent = "Token cleared. The extension won't connect until you save one again.";
+  setTimeout(refreshStatus, 500);
+});
+
 refreshNote();
 refreshStatus();
 setInterval(refreshStatus, 1000);

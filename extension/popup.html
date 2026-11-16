@@ -10,14 +10,17 @@
       button { margin-top: 8px; }
       #status { margin-top: 10px; }
       #note { margin-top: 6px; color: #666; }
+      #warn { margin-top: 10px; color: #8a4b00; font-size: 12px; }
     </style>
   </head>
   <body>
     <label for="token">Pairing token (printed by the terminal app)</label>
     <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="paste token" />
     <button id="save" type="button">Save</button>
+    <button id="clear" type="button">Clear token</button>
     <div id="status">checking…</div>
     <div id="note"></div>
+    <p id="warn">While a token is saved, the extension obeys whatever program answers on 127.0.0.1:8765. Keep the terminal app running, or clear the token when you're not using it.</p>
     <script src="popup.js"></script>
   </body>
 </html>

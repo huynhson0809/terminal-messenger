@@ -127,10 +127,13 @@ async function handleCommand(raw) {
     // Keepalive echoes or anything unexpected: ignore silently unless it
     // looks like an attempted command.
     if (raw && typeof raw === "object" && typeof raw.type === "string" && raw.type !== "ping") {
-      sendToTerminal(lib.errorMsg(v.error));
+      sendToTerminal(lib.withRef(lib.errorMsg(v.error), lib.isValidRef(raw.ref) ? raw.ref : undefined));
     }
     return;
   }
+  // Every reply to a send carries the send's ref, so the terminal can tell
+  // which message it is about.
+  const reply = (msg) => sendToTerminal(lib.withRef(msg, v.cmd.ref));
   let tab;
   try {
     tab = await findMessengerTab();
@@ -138,20 +141,23 @@ async function handleCommand(raw) {
     tab = null;
   }
   if (!tab) {
-    sendToTerminal(lib.errorMsg("no Messenger tab open"));
+    reply(lib.errorMsg("no Messenger tab open"));
     return;
   }
-  let reply;
+  let answer;
   try {
-    reply = await chrome.tabs.sendMessage(tab.id, { kind: "command", cmd: v.cmd });
+    answer = await chrome.tabs.sendMessage(tab.id, { kind: "command", cmd: v.cmd });
   } catch {
-    sendToTerminal(
-      lib.errorMsg("Messenger tab not ready, reload it (the extension must be loaded before the page)"),
-    );
+    // For a send this can also mean the tab went away mid-send, so the
+    // terminal treats it as unconfirmed rather than "not sent".
+    reply({
+      ...lib.errorMsg("Messenger tab not ready, reload it (the extension must be loaded before the page)"),
+      ...(v.cmd.type === "send" ? { unconfirmed: true } : {}),
+    });
     return;
   }
-  if (lib.isRelayable(reply)) sendToTerminal(reply);
-  else sendToTerminal(lib.errorMsg("no reply from the Messenger tab"));
+  if (lib.isRelayable(answer)) reply(answer);
+  else reply(lib.errorMsg("no reply from the Messenger tab"));
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
