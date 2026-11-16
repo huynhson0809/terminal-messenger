@@ -79,7 +79,7 @@ Sau đó, trong terminal:
 ```
 > /list
   1. Alice - hẹn 5 giờ nhé
-* 2. Nhóm học - Bob: có ai làm chưa?
+● 2. Nhóm học - Bob: có ai làm chưa?
 > /open 1
 -- Alice --
 [1] Alice: hẹn 5 giờ nhé?
@@ -96,7 +96,7 @@ Mỗi dòng bạn gõ là một lệnh (bắt đầu bằng `/`) hoặc một ti
 
 | Lệnh | Tác dụng |
 |---|---|
-| `/list` | Hiện danh sách chat có đánh số. `*` là chưa đọc. |
+| `/list` | Hiện danh sách chat có đánh số. Chat chưa đọc có `●` ở đầu và được in đậm. |
 | `/open <n>` | Mở chat số `n` và in các tin gần đây. Mỗi tin có `[số]`. |
 | *chữ bất kỳ* | Gửi thành tin nhắn trong chat đang mở. |
 | `//chữ` | Gửi tin bắt đầu bằng dấu gạch chéo (gửi `/chữ`). |

@@ -24,7 +24,7 @@ const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha"
 
 const HELP_LINES = [
   "Commands:",
-  "  /list                       show your chats, numbered",
+  "  /list                       show your chats, numbered (unread ones start with ● and are bold)",
   "  /open <n>                   open chat number n and show its messages (each has a [number])",
   "  <text>                      (any line without a leading /) send it as a reply in the open chat",
   "  //text                      send a message that starts with a slash",
@@ -80,6 +80,7 @@ export function createApp({
   onQuit = () => {},
   onClear = () => {},
   onRedraw = () => {},
+  boldUnread = false,
   confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -267,7 +268,7 @@ export function createApp({
         if (!Array.isArray(msg.chats)) throw new Error("chats not an array");
         const next = msg.chats.map(cleanChat);
         chats = next;
-        for (const l of renderChats(chats)) print(l);
+        for (const l of renderChats(chats, { bold: boldUnread })) print(l);
         return;
       }
       case "messages": {

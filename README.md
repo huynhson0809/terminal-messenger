@@ -79,7 +79,7 @@ Then, in the terminal:
 ```
 > /list
   1. Alice - see you at 5
-* 2. Study group - Bob: did anyone start?
+● 2. Study group - Bob: did anyone start?
 > /open 1
 -- Alice --
 [1] Alice: see you at 5?
@@ -96,7 +96,7 @@ Every line you type is either a command (starts with `/`) or a message.
 
 | Command | What it does |
 |---|---|
-| `/list` | Show your chats, numbered. `*` marks unread. |
+| `/list` | Show your chats, numbered. Unread chats start with `●` and are shown in bold. |
 | `/open <n>` | Open chat number `n` and print its recent messages. Each message has a `[number]`. |
 | *any text* | Send it as a message in the open chat. |
 | `//text` | Send a message that starts with a slash (sends `/text`). |

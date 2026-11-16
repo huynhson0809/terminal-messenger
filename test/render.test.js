@@ -2,15 +2,28 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderChats, renderMessage } from "../src/render.js";
 
-test("renderChats numbers from 1 and marks unread with *", () => {
+test("renderChats numbers from 1 and marks unread with a dot", () => {
   const lines = renderChats([
     { id: "a", name: "Alice", preview: "hi", unread: true },
     { id: "b", name: "Bob", preview: "yo", unread: false },
   ]);
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /^\*\s*1\b.*Alice.*hi/);
+  assert.match(lines[0], /^\u25cf\s*1\b.*Alice.*hi/);
   assert.match(lines[1], /^\s+2\b.*Bob.*yo/);
-  assert.ok(!lines[1].includes("*"));
+  assert.ok(!lines[1].includes("\u25cf"));
+  assert.ok(!lines.join("").includes("\x1b")); // no escape codes unless asked
+});
+
+test("renderChats bolds only the unread rows when asked", () => {
+  const lines = renderChats(
+    [
+      { id: "a", name: "Alice", preview: "hi", unread: true },
+      { id: "b", name: "Bob", preview: "yo", unread: false },
+    ],
+    { bold: true },
+  );
+  assert.equal(lines[0], "\x1b[1m\u25cf 1. Alice - hi\x1b[0m");
+  assert.equal(lines[1], "  2. Bob - yo");
 });
 
 test("renderMessage shows text with sender", () => {

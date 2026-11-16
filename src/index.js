@@ -61,6 +61,8 @@ app = createApp({
   // Clear the screen and the scrollback.
   onClear: () => process.stdout.write("\x1b[2J\x1b[3J\x1b[H"),
   // Redraw the visible screen (for /more); the scrollback is left alone.
+  // Bold unread chats in /list, on a real terminal unless NO_COLOR is set.
+  boldUnread: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR,
   onRedraw: () => process.stdout.write("\x1b[2J\x1b[H"),
 });
 console.log("terminal-messenger ready: type /help for the commands");
