@@ -45,7 +45,7 @@ If a step reports an error such as "can't read the page", see Known limits.
 
 ## Known limits
 
-- The Messenger tab must stay open, and its window must stay at least partly visible to send. A minimized, off-desktop or fully covered window can still be read, but Chrome pauses it, so sending is refused.
+- The Messenger tab must stay open, and its window must stay at least partly visible to send. Chrome pauses a minimized, off-desktop or fully covered window: sending is refused, and new messages may not show up in the terminal until the window is visible again.
 - Facebook changes its page layout from time to time. When it does, reading or sending can break until the selectors in the single `SELECTORS` object at the top of `extension/content.js` are updated. Those selectors were not verified against live Facebook when this was written, so expect to adjust them on first use.
 - End-to-end encrypted chats only work if they are already unlocked in the browser tab.
 - Text only. Images, stickers and videos show as placeholders such as `[image]`. File attachments without an image, video or audio preview may not notify.
