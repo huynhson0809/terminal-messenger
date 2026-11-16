@@ -9,5 +9,22 @@
   },
   "dependencies": {
     "ws": "^8.23.0"
+  },
+  "description": "Read and reply to Facebook Messenger from your terminal, through a Chrome extension working in your own Messenger tab.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huynhson0809/terminal-messenger.git"
+  },
+  "keywords": [
+    "messenger",
+    "facebook",
+    "terminal",
+    "cli",
+    "chrome-extension"
+  ],
+  "author": "Huynh Ngoc Son",
+  "engines": {
+    "node": ">=20"
   }
 }
