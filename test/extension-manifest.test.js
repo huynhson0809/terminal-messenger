@@ -44,10 +44,15 @@ test("no dangerous or broad permissions anywhere", () => {
 });
 
 test("content scripts run only on Messenger pages and load lib.js before content.js", () => {
-  assert.equal(manifest.content_scripts.length, 1);
-  const cs = manifest.content_scripts[0];
-  for (const m of cs.matches) assert.ok(MESSENGER.includes(m), `unexpected match ${m}`);
-  assert.deepEqual(cs.js, ["lib.js", "content.js"]);
+  assert.equal(manifest.content_scripts.length, 2);
+  for (const cs of manifest.content_scripts) {
+    for (const m of cs.matches) assert.ok(MESSENGER.includes(m), `unexpected match ${m}`);
+  }
+  assert.deepEqual(manifest.content_scripts[0].js, ["lib.js", "content.js"]);
+  // The page-world shim: the only script allowed to run in the MAIN world.
+  const shim = manifest.content_scripts[1];
+  assert.deepEqual(shim.js, ["page-shim.js"]);
+  assert.equal(shim.world, "MAIN");
 });
 
 test("extension pages may only connect to the local bridge", () => {
@@ -59,7 +64,7 @@ test("extension pages may only connect to the local bridge", () => {
 test("service worker, popup and every referenced file exist", () => {
   assert.equal(manifest.background.service_worker, "background.js");
   assert.equal(manifest.action.default_popup, "popup.html");
-  for (const f of ["background.js", "popup.html", "popup.js", ...manifest.content_scripts[0].js]) {
+  for (const f of ["background.js", "popup.html", "popup.js", ...manifest.content_scripts.flatMap((c) => c.js)]) {
     assert.ok(existsSync(join(extDir, f)), `missing ${f}`);
   }
 });

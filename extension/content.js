@@ -334,10 +334,22 @@
     waitFor: waitForDom,
   };
 
+  // page-shim.js (page world) makes document.hasFocus() true for the length of
+  // a send; Facebook's message box ignores typing while the document is not
+  // focused, which is always the case when you are working in the terminal.
+  function setFocusShim(on) {
+    document.dispatchEvent(new Event(on ? "tm-focus-shim-on" : "tm-focus-shim-off"));
+  }
+
   async function handleSend(id, text) {
-    const reply = await lib.performSend({ id, text, page, gate: sendGate, typeTimeoutMs: TYPE_TIMEOUT_MS });
-    if (reply.type === "sent") recentSent.add(text);
-    return reply;
+    setFocusShim(true);
+    try {
+      const reply = await lib.performSend({ id, text, page, gate: sendGate, typeTimeoutMs: TYPE_TIMEOUT_MS });
+      if (reply.type === "sent") recentSent.add(text);
+      return reply;
+    } finally {
+      setFocusShim(false);
+    }
   }
 
   async function handleCommand(cmd) {

@@ -21,6 +21,16 @@
       "js": ["lib.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/messages/*",
+        "https://www.messenger.com/*"
+      ],
+      "js": ["page-shim.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
     }
   ],
   "action": {
