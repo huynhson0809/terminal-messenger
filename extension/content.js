@@ -16,12 +16,9 @@
   // ==========================================================================
   const SELECTORS = {
     // Sidebar that holds the conversation list (first match wins).
-    chatList: [
-      '[role="navigation"] [role="grid"][aria-label="Chats"]',
-      '[role="grid"][aria-label="Chats"]',
-      '[role="navigation"][aria-label="Chats"]',
-      '[aria-label="Chats"]',
-    ],
+    // Facebook localizes aria-labels ("Chats" is "Đoạn chat" in Vietnamese), so
+    // match by role only: the chat list is the page's one role=grid.
+    chatList: ['[role="navigation"] [role="grid"]', '[role="grid"]'],
     // A conversation link inside the list: href is /messages/t/<id>/ or
     // /messages/e2ee/t/<id>/ (messenger.com: /t/<id>/, /e2ee/t/<id>/).
     chatRowLink: 'a[href*="/t/"]',
@@ -30,19 +27,22 @@
     // Text pieces in a row, in order: name first, then the preview line.
     chatRowText: 'span[dir="auto"]',
     // Unread markers in a row (either one counts).
-    chatRowUnread: '[aria-label*="unread" i], [aria-label="Mark as read"]',
-    chatRowUnreadText: /^unread message:?$/i,
+    chatRowUnread: '[aria-label*="unread" i], [aria-label="Mark as read"], [aria-label*="chưa đọc" i]',
+    chatRowUnreadText: /^(unread message|tin nhắn chưa đọc):?$/i,
 
     // The open conversation.
     thread: '[role="main"]',
+    // Seen on the live page: messages are role=article rows inside one role=log.
     messageList: [
+      '[role="main"] [role="log"]',
       '[role="main"] [aria-label^="Messages in conversation"]',
       '[role="main"] [role="grid"]',
     ],
-    messageRow: '[role="row"]',
+    messageRow: '[role="article"]',
     // Message body text inside a row.
     messageText: 'div[dir="auto"]',
-    // Screen-reader heading on a row: the sender's name, or "You sent".
+    // Screen-reader heading on a row: the sender's name, or "You sent" (English
+    // only; own messages are also detected by position, see isOwnByPosition).
     senderHeading: 'h4, h5, h6, [role="heading"]',
     outgoingHeading: /^you sent$/i,
     // Conversation title (used as the sender name in 1:1 chats).
@@ -187,13 +187,38 @@
     return null;
   }
 
+  // Language-independent: your own messages sit against the right edge of the
+  // message list, other people's against the left (after their avatar).
+  function isOwnByPosition(row, list, heading) {
+    const el = innermost(row, SELECTORS.messageText).find((t) => {
+      const x = textOf(t);
+      return x && x !== heading;
+    });
+    if (!el) return false;
+    const box = el.getBoundingClientRect();
+    const bounds = list.getBoundingClientRect();
+    if (!box.width || !bounds.width) return false;
+    return bounds.right - box.right < box.left - bounds.left;
+  }
+
+  // The pane's own heading, only when it matches the list name: Facebook has
+  // several landmark headings in the pane whose text varies by language.
+  function paneTitle(name) {
+    const main = first(SELECTORS.thread);
+    if (!main || !name) return "";
+    for (const h of main.querySelectorAll("h1, h2, h3")) {
+      if (textOf(h) === name) return name;
+    }
+    return "";
+  }
+
   function readThreadMessages(fallbackName) {
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
     const rows = [];
     for (const row of list.querySelectorAll(SELECTORS.messageRow)) {
       const heading = textOf(row.querySelector(SELECTORS.senderHeading));
-      const outgoing = SELECTORS.outgoingHeading.test(heading);
+      const outgoing = SELECTORS.outgoingHeading.test(heading) || isOwnByPosition(row, list, heading);
       const text = innermost(row, SELECTORS.messageText)
         .map(textOf)
         .filter((t) => t && t !== heading)
@@ -254,7 +279,7 @@
     const messages = readThreadMessages(name);
     resetBaseline(id, messages);
     // The pane's own title (not the list name), so a mismatch is visible.
-    return lib.buildMessages(id, messages, textOf(first(SELECTORS.threadTitle)));
+    return lib.buildMessages(id, messages, paneTitle(name));
   }
 
   function composerFocused(composer) {
