@@ -741,3 +741,50 @@ test("/help prints every command and sends nothing", async () => {
     assert.ok(text.includes(cmd), `help mentions ${cmd}`);
   }
 });
+
+// ---- leaving a chat with /list ------------------------------------------------
+
+test("/list leaves the open chat: its new messages become [new] notices", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx, 1);
+  ctx.app.handleExtensionMessage({ type: "incoming", id: "a1", name: "Alice", message: { from: "Alice", text: "one", ts: 1 } });
+  assert.equal(ctx.lines.at(-1), "[1] Alice: one"); // open: numbered
+  await ctx.app.handleLine("/list");
+  ctx.lines.length = 0;
+  ctx.app.handleExtensionMessage({ type: "incoming", id: "a1", name: "Alice", message: { from: "Alice", text: "two", ts: 2 } });
+  assert.deepEqual(ctx.lines, ["[new] Alice: two"]);
+});
+
+test("after /list there is no open chat to reply or react in", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx, 1);
+  await ctx.app.handleLine("/list");
+  ctx.sent.length = 0;
+  ctx.lines.length = 0;
+  await ctx.app.handleLine("hello");
+  await ctx.app.handleLine("/react 1");
+  await ctx.app.handleLine("/more");
+  assert.deepEqual(ctx.sent, []);
+  assert.deepEqual(ctx.lines, ["open a conversation first", "open a conversation first", "open a conversation first"]);
+});
+
+test("a [new] notice for a group chat names the chat and the sender", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  ctx.app.handleExtensionMessage({ type: "incoming", id: "g9", name: "Study group", message: { from: "Bob", text: "did anyone start?", ts: 1 } });
+  assert.deepEqual(ctx.lines, ["[new] Study group - Bob: did anyone start?"]);
+});
+
+test("/list with the extension disconnected does not leave the open chat", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx, 1);
+  ctx.state.connected = false;
+  await ctx.app.handleLine("/list");
+  ctx.state.connected = true;
+  ctx.lines.length = 0;
+  ctx.app.handleExtensionMessage({ type: "incoming", id: "a1", name: "Alice", message: { from: "Alice", text: "still here", ts: 1 } });
+  assert.equal(ctx.lines[0], "[1] Alice: still here");
+});

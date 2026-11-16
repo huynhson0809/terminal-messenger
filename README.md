@@ -96,7 +96,7 @@ Every line you type is either a command (starts with `/`) or a message.
 
 | Command | What it does |
 |---|---|
-| `/list` | Show your chats, numbered. Unread chats start with `●` and are shown in bold. |
+| `/list` | Leave the open chat and show your chats, numbered. Unread chats start with `●` and are shown in bold. |
 | `/open <n>` | Open chat number `n` and print its recent messages. Each message has a `[number]`. |
 | *any text* | Send it as a message in the open chat. |
 | `//text` | Send a message that starts with a slash (sends `/text`). |
@@ -115,7 +115,7 @@ Every line you type is either a command (starts with `/`) or a message.
 - Before acting on a numbered message (`/react`, `/reply`), the extension checks that the message at that position still starts with the text you saw. If new or older messages moved things around it refuses instead of guessing; run `/open` again.
 - `/react` and `/reply` only reach the newest few messages (about one screen). Facebook keeps only the messages in view on the page.
 - Paste one line at a time. A paste of several lines is refused so a stray clipboard never goes out as many messages.
-- A new message rings the bell. In the open chat it is printed as it arrives; in another chat it appears as `[new] Name: ...`.
+- A new message rings the bell. In the open chat it is printed as it arrives; in any chat that is not open (including one you just left with `/list`) it appears as `[new] Chat - Sender: ...`.
 
 ## Safety and privacy
 

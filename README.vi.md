@@ -96,7 +96,7 @@ Mỗi dòng bạn gõ là một lệnh (bắt đầu bằng `/`) hoặc một ti
 
 | Lệnh | Tác dụng |
 |---|---|
-| `/list` | Hiện danh sách chat có đánh số. Chat chưa đọc có `●` ở đầu và được in đậm. |
+| `/list` | Thoát chat đang mở và hiện danh sách chat có đánh số. Chat chưa đọc có `●` ở đầu và được in đậm. |
 | `/open <n>` | Mở chat số `n` và in các tin gần đây. Mỗi tin có `[số]`. |
 | *chữ bất kỳ* | Gửi thành tin nhắn trong chat đang mở. |
 | `//chữ` | Gửi tin bắt đầu bằng dấu gạch chéo (gửi `/chữ`). |
@@ -115,7 +115,7 @@ Mỗi dòng bạn gõ là một lệnh (bắt đầu bằng `/`) hoặc một ti
 - Trước khi làm gì với một tin có số (`/react`, `/reply`), extension kiểm tra tin ở vị trí đó vẫn bắt đầu bằng đúng chữ bạn đã thấy. Nếu có tin mới hay tin cũ làm lệch, nó từ chối thay vì đoán; hãy `/open` lại.
 - `/react` và `/reply` chỉ với tới vài tin mới nhất (cỡ một màn hình), vì Facebook chỉ giữ các tin đang hiển thị trên trang.
 - Chỉ dán một dòng mỗi lần. Dán nhiều dòng bị từ chối để nội dung vô tình trong clipboard không bị gửi đi thành nhiều tin.
-- Tin mới làm terminal kêu chuông. Trong chat đang mở nó được in ra ngay; ở chat khác nó hiện dạng `[new] Tên: ...`.
+- Tin mới làm terminal kêu chuông. Trong chat đang mở nó được in ra ngay; ở chat không mở (kể cả chat bạn vừa rời bằng `/list`) nó hiện dạng `[new] Chat - Người gửi: ...`.
 
 ## An toàn và quyền riêng tư
 

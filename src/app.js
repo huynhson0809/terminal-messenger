@@ -24,7 +24,7 @@ const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha"
 
 const HELP_LINES = [
   "Commands:",
-  "  /list                       show your chats, numbered (unread ones start with ● and are bold)",
+  "  /list                       leave the open chat and show your chats, numbered (unread: ● and bold)",
   "  /open <n>                   open chat number n and show its messages (each has a [number])",
   "  <text>                      (any line without a leading /) send it as a reply in the open chat",
   "  //text                      send a message that starts with a slash",
@@ -33,6 +33,7 @@ const HELP_LINES = [
   "                              1 like  2 love  3 haha  4 wow  5 sad  6 angry",
   "  /more                       load older messages and show the whole chat again, oldest first",
   "  /back                       close the open chat",
+  "  (messages from chats that are not open appear as [new] Chat - Sender: text)",
   "  /clear                      clear the screen and its scrollback",
   "  /help                       show this help",
   "  /quit                       exit",
@@ -57,6 +58,14 @@ export function createBridgeSender(bridge) {
     if (!bridge.isConnected()) throw new Error("extension not connected");
     bridge.send(target ? { type: "reply", id, text, target, ref } : { type: "send", id, text, ref });
   };
+}
+
+// A message from a chat that is not open: `[new] Chat - Sender: text`, or
+// `[new] Chat: text` in a 1-1 chat where the sender is the chat.
+function newNotice(m, chatName) {
+  if (!chatName) return `[new] ${renderMessage(m)}`;
+  const sender = m.from && m.from !== chatName && m.from !== "you" ? ` - ${m.from}` : "";
+  return `[new] ${chatName}${sender}: ${m.text ? m.text : "[attachment]"}`;
 }
 
 // Largest k such that the last k of `chunk` have the same texts as the first k
@@ -167,6 +176,10 @@ export function createApp({
         return;
       case "list":
         if (!requireConnection()) return;
+        // Going back to the list leaves the open chat: its new messages now
+        // show up as [new] notices like any other chat's.
+        open = null;
+        thread = [];
         bridge.send({ type: "list" });
         return;
       case "open": {
@@ -311,7 +324,7 @@ export function createApp({
         if (open && msg.id === open.id) {
           thread.push(m);
           print(numbered(thread.length, m));
-        } else print(`[new] ${renderMessage(m, clean(msg.name) || undefined)}`);
+        } else print(newNotice(m, clean(msg.name)));
         return;
       }
       case "sent": {
