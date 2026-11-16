@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Terminal Messenger Bridge",
+  "version": "0.1.0",
+  "description": "Relays your open Messenger tab to the terminal-messenger app on this computer (127.0.0.1 only).",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.facebook.com/messages/*",
+    "https://www.messenger.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/messages/*",
+        "https://www.messenger.com/*"
+      ],
+      "js": ["lib.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Terminal Messenger",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:8765"
+  }
+}

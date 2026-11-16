@@ -1,0 +1,5 @@
+{
+  "//": "Not an npm package. Marks extension/*.js as CommonJS for node:test only (the root package is type: module); Chrome ignores this file.",
+  "type": "commonjs",
+  "private": true
+}

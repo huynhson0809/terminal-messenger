@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Terminal Messenger</title>
+    <style>
+      body { font: 13px system-ui, sans-serif; width: 300px; margin: 12px; }
+      label { display: block; margin-bottom: 4px; }
+      input { width: 100%; box-sizing: border-box; font-family: monospace; }
+      button { margin-top: 8px; }
+      #status { margin-top: 10px; }
+      #note { margin-top: 6px; color: #666; }
+    </style>
+  </head>
+  <body>
+    <label for="token">Pairing token (printed by the terminal app)</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="paste token" />
+    <button id="save" type="button">Save</button>
+    <div id="status">checking…</div>
+    <div id="note"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
