@@ -339,7 +339,10 @@
     return best;
   }
 
+  const FOCUS_SETTLE_MS = 300;
+
   const page = {
+    settleAfterFocus: () => new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS)),
     beforeTyping: (box) => {
       const b = sendSlotButton(box);
       sendSlotLabelBefore = b ? b.getAttribute("aria-label") : null;

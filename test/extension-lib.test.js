@@ -744,6 +744,38 @@ test("performSend with no usable send button sends nothing and leaves the text",
   assert.equal(gate.marks, 0);
 });
 
+test("performSend waits for the page to register focus before typing", async () => {
+  const page = fakePage();
+  const order = [];
+  const focus = page.focus;
+  page.focus = (b) => {
+    order.push("focus");
+    focus(b);
+  };
+  page.settleAfterFocus = async () => {
+    order.push("settle");
+  };
+  const insert = page.insertText;
+  page.insertText = (b, t) => {
+    order.push("insert");
+    insert(b, t);
+  };
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "sent");
+  assert.deepEqual(order, ["focus", "settle", "insert"]);
+});
+
+test("performSend types nothing if focus is lost while waiting for it to register", async () => {
+  const page = fakePage();
+  page.settleAfterFocus = async () => {
+    page.focused = null;
+  };
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.enters, 0);
+});
+
 test("performSend refuses during the settle window, typing nothing", async () => {
   const page = fakePage({ settled: false });
   const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });

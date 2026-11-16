@@ -382,7 +382,8 @@
   //   page: pathname(), isSettled(id), findComposers(), textOf(box),
   //         focus(box), isFocused(box), isAttached(box), insertText(box, text),
   //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>;
-//         optional beforeTyping(box), findSendButton(box) -> element|null, clickSend(el)
+//         optional settleAfterFocus() -> Promise, beforeTyping(box),
+//         findSendButton(box) -> element|null, clickSend(el)
   //   gate: waitTurn(), markSent()   (createSendGate)
   // Every refusal happens before Enter. Enter is pressed at most once.
   async function performSend({
@@ -424,6 +425,12 @@
     // 3. Type into the real composer and verify exactly that text landed.
     page.focus(box);
     if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
+    // The page needs a moment to register a programmatic focus; typing in the
+    // same tick is silently dropped by its editor.
+    if (page.settleAfterFocus) {
+      await page.settleAfterFocus();
+      if (!page.isFocused(box) || !page.isAttached(box)) return err(SEND_ERRORS.focus);
+    }
     if (page.beforeTyping) page.beforeTyping(box);
     const inserted = page.insertText(box, text);
     const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
