@@ -731,3 +731,13 @@ test("/more clears the screen before redrawing the whole conversation", async ()
   app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [{ from: "A", text: "ancient", ts: 0 }, ...THREAD] });
   assert.equal(redraws, 1);
 });
+
+test("/help prints every command and sends nothing", async () => {
+  const ctx = setup({ connected: false }); // works with no extension connected
+  await ctx.app.handleLine("/help");
+  assert.deepEqual(ctx.sent, []);
+  const text = ctx.lines.join("\n");
+  for (const cmd of ["/list", "/open", "/reply", "/react", "/more", "/back", "/clear", "/help", "/quit"]) {
+    assert.ok(text.includes(cmd), `help mentions ${cmd}`);
+  }
+});

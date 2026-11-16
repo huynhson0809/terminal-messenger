@@ -22,6 +22,7 @@ Lost the token? Print it with `cat ~/.terminal-messenger/token`. To get a new on
 - `/react <1-6>` reacts to the newest message from the other person: 1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry. `/react <1-6> <message number>` reacts to that message instead. It prints `reacted ...` or `not reacted ...: reason`; it never retries.
 - `/reply <message number> <text>` sends `<text>` as a reply to that message (Messenger's "reply" quote).
 - `/more` scrolls the chat up in the tab and adds the older messages it finds at the top: the screen is cleared and the whole conversation is printed again, oldest first, newest last, with the older messages above the ones from `/open`. Message numbers shift by the number added, which it tells you. Run it again to go further back; the Messenger tab is scrolled back to the newest message each time. Facebook only keeps the messages in view on the page, so `/react` and `/reply` only work on the newest few messages (about what fits on one screen); for older ones they say so.
+- `/help` (or `/?`) prints the list of commands.
 - `/clear` clears the terminal screen and its scrollback.
 
 Before acting on a numbered message, the extension checks that the message at that position still starts with the text you saw. If new or older messages moved things around it refuses (`that message isn't where it was ... run /open again`) instead of guessing. A reply to a message that has no text (an image, say) is refused.

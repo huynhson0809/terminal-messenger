@@ -23,6 +23,9 @@ export function parseCommand(line) {
       }
       return { kind: "open", n: Number(args[0]) };
     }
+    case "/help":
+    case "/?":
+      return { kind: "help" };
     case "/clear":
       return { kind: "clear" };
     case "/more":
@@ -38,7 +41,7 @@ export function parseCommand(line) {
     default:
       return {
         kind: "error",
-        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit; use // to start a message with a slash)`,
+        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /help, /back, /quit; use // to start a message with a slash)`,
       };
   }
 }

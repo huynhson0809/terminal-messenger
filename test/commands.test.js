@@ -66,3 +66,8 @@ test("/clear and /more", () => {
   assert.deepEqual(parseCommand("/clear"), { kind: "clear" });
   assert.deepEqual(parseCommand("/more"), { kind: "more" });
 });
+
+test("/help and /? show help", () => {
+  assert.deepEqual(parseCommand("/help"), { kind: "help" });
+  assert.deepEqual(parseCommand("/?"), { kind: "help" });
+});

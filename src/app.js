@@ -22,6 +22,24 @@ function cleanMessage(m) {
 // /react <n>: the same numbering the extension uses.
 const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha", "\u{1F62E} wow", "\u{1F622} sad", "\u{1F621} angry"];
 
+const HELP_LINES = [
+  "Commands:",
+  "  /list                       show your chats, numbered",
+  "  /open <n>                   open chat number n and show its messages (each has a [number])",
+  "  <text>                      (any line without a leading /) send it as a reply in the open chat",
+  "  //text                      send a message that starts with a slash",
+  "  /reply <msg#> <text>        reply to message [msg#] (only the newest few messages)",
+  "  /react <1-6> [msg#]         react to the newest message from them, or to message [msg#]",
+  "                              1 like  2 love  3 haha  4 wow  5 sad  6 angry",
+  "  /more                       load older messages and show the whole chat again, oldest first",
+  "  /back                       close the open chat",
+  "  /clear                      clear the screen and its scrollback",
+  "  /help                       show this help",
+  "  /quit                       exit",
+  "Keep the Messenger window visible on screen (a corner is enough), or sending can fail.",
+  "Pasting several lines at once sends nothing; type one line at a time.",
+];
+
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
 const CONFIRM_TIMEOUT_MS = 20000;
 const SNIPPET_LEN = 30;
@@ -134,6 +152,9 @@ export function createApp({
         return;
       case "quit":
         await onQuit();
+        return;
+      case "help":
+        for (const l of HELP_LINES) print(l);
         return;
       case "clear":
         onClear();

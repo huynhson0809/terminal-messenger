@@ -63,7 +63,7 @@ app = createApp({
   // Redraw the visible screen (for /more); the scrollback is left alone.
   onRedraw: () => process.stdout.write("\x1b[2J\x1b[H"),
 });
-console.log("terminal-messenger ready: /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit");
+console.log("terminal-messenger ready: type /help for the commands");
 
 // A multi-line paste arrives as several lines within milliseconds; refuse
 // the whole burst instead of sending one message per line.
