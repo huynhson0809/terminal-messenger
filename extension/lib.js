@@ -22,6 +22,19 @@
     MIN_MEDIA_PX: 48, // smaller images are avatars / read receipts, not messages
   });
 
+  // /react 1..6. The strings are the alt text of the emoji images in Facebook's
+  // reaction picker (without the U+FE0F variation selector), so the picker's
+  // buttons are found by the emoji itself, in any interface language.
+  const REACTION_EMOJI = Object.freeze(["\u{1F44D}", "\u2764", "\u{1F606}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"]);
+
+  function reactionEmoji(n) {
+    return Number.isInteger(n) && n >= 1 && n <= REACTION_EMOJI.length ? REACTION_EMOJI[n - 1] : null;
+  }
+
+  function sameEmoji(alt, emoji) {
+    return typeof alt === "string" && alt.replace(/\uFE0F/g, "") === emoji;
+  }
+
   const MEDIA_PLACEHOLDERS = Object.freeze({
     image: "[image]",
     video: "[video]",
@@ -252,12 +265,22 @@
             ? { type: "send", id: msg.id, text: msg.text }
             : { type: "send", id: msg.id, text: msg.text, ref: msg.ref },
         };
+      case "react":
+        if (!isValidId(msg.id)) return { ok: false, error: "invalid conversation id" };
+        if (reactionEmoji(msg.n) === null) return { ok: false, error: "invalid reaction number" };
+        if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
+        return {
+          ok: true,
+          cmd: msg.ref === undefined
+            ? { type: "react", id: msg.id, n: msg.n }
+            : { type: "react", id: msg.id, n: msg.n, ref: msg.ref },
+        };
       default:
         return { ok: false, error: "unknown command" };
     }
   }
 
-  const RELAY_TYPES = ["chats", "messages", "incoming", "sent", "error"];
+  const RELAY_TYPES = ["chats", "messages", "incoming", "sent", "reacted", "error"];
 
   function isRelayable(msg) {
     return Boolean(msg) && typeof msg === "object" && RELAY_TYPES.includes(msg.type);
@@ -524,6 +547,9 @@
     incomingOnly,
     diffUnreadChats,
     validateCommand,
+    REACTION_EMOJI,
+    reactionEmoji,
+    sameEmoji,
     isRelayable,
     pickMessengerTab,
     waitFor,

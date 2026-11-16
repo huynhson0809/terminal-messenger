@@ -854,3 +854,34 @@ test("performSend: an empty box in a different chat does not count as sent", asy
   assert.equal(r.unconfirmed, true);
   assert.equal(page.enters, 1);
 });
+
+// ---- /react support ---------------------------------------------------------
+
+test("validateCommand accepts react 1-6 with an id and optional ref, nothing else", () => {
+  assert.deepEqual(lib.validateCommand({ type: "react", id: "55", n: 2, ref: "r1" }), {
+    ok: true,
+    cmd: { type: "react", id: "55", n: 2, ref: "r1" },
+  });
+  assert.deepEqual(lib.validateCommand({ type: "react", id: "55", n: 6 }), {
+    ok: true,
+    cmd: { type: "react", id: "55", n: 6 },
+  });
+  for (const bad of [{ n: 0 }, { n: 7 }, { n: "2" }, { n: 1.5 }, { n: 1, id: "" }, { n: 1, ref: "bad ref!" }]) {
+    assert.equal(lib.validateCommand({ type: "react", id: "55", ...bad }).ok, false, JSON.stringify(bad));
+  }
+});
+
+test("reacted replies are relayable", () => {
+  assert.equal(lib.isRelayable({ type: "reacted", id: "55" }), true);
+});
+
+test("reaction numbers map to the six picker emoji, matched by alt text without U+FE0F", () => {
+  assert.equal(lib.reactionEmoji(1), "\u{1F44D}");
+  assert.equal(lib.reactionEmoji(2), "❤");
+  assert.equal(lib.reactionEmoji(0), null);
+  assert.equal(lib.reactionEmoji(7), null);
+  assert.equal(lib.sameEmoji("❤️", "❤"), true);
+  assert.equal(lib.sameEmoji("❤", "❤"), true);
+  assert.equal(lib.sameEmoji("\u{1F606}", "❤"), false);
+  assert.equal(lib.sameEmoji(null, "❤"), false);
+});

@@ -48,6 +48,13 @@
     // Conversation title (used as the sender name in 1:1 chats).
     threadTitle: ['[role="main"] h1', '[role="main"] h2'],
 
+    // Reactions. A message's toolbar (role=toolbar inside its row) only gets
+    // its buttons while the mouse is over the message; the first one reacts.
+    // The picker's six options are role=menuitemradio holding an emoji <img>.
+    messageToolbar: '[role="toolbar"]',
+    toolbarButton: '[role="button"]',
+    reactionOption: '[role="menuitemradio"]',
+
     // Buttons around the message box (emoji, send / like...). Their labels are
     // localized, so the send button is found by position (see findSendButton).
     composerButton: '[role="button"], button',
@@ -181,14 +188,19 @@
     return textOf(first(SELECTORS.threadTitle));
   }
 
-  function mediaKind(row) {
+  function mediaOf(row) {
     for (const [selector, kind] of SELECTORS.messageMedia) {
       for (const el of row.querySelectorAll(selector)) {
         const box = el.getBoundingClientRect();
-        if (lib.isMessageMediaSize(box.width, box.height)) return kind;
+        if (lib.isMessageMediaSize(box.width, box.height)) return { el, kind };
       }
     }
     return null;
+  }
+
+  function mediaKind(row) {
+    const m = mediaOf(row);
+    return m ? m.kind : null;
   }
 
   // Language-independent: your own messages sit against the right edge of the
@@ -198,8 +210,10 @@
       const x = textOf(t);
       return x && x !== heading;
     });
-    if (!el) return false;
-    const box = el.getBoundingClientRect();
+    // A photo or video has no text: use the media itself.
+    const target = el || (mediaOf(row) || {}).el;
+    if (!target) return false;
+    const box = target.getBoundingClientRect();
     const bounds = list.getBoundingClientRect();
     if (!box.width || !bounds.width) return false;
     return bounds.right - box.right < box.left - bounds.left;
@@ -284,6 +298,93 @@
     resetBaseline(id, messages);
     // The pane's own title (not the list name), so a mismatch is visible.
     return lib.buildMessages(id, messages, paneTitle(name));
+  }
+
+  // ---- reacting to the latest message from the other person ---------------
+
+  function isVisible(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // Newest row that shows something and is not yours.
+  function latestIncomingRow(list) {
+    const rows = Array.from(list.querySelectorAll(SELECTORS.messageRow));
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      const heading = textOf(row.querySelector(SELECTORS.senderHeading));
+      const hasText = innermost(row, SELECTORS.messageText).some((t) => {
+        const x = textOf(t);
+        return x && x !== heading;
+      });
+      if (!hasText && !mediaOf(row)) continue; // divider, spacer
+      if (SELECTORS.outgoingHeading.test(heading) || isOwnByPosition(row, list, heading)) continue;
+      return row;
+    }
+    return null;
+  }
+
+  // The toolbar's buttons are rendered only while the page believes the mouse
+  // is over the message, so send it the hover events a real mouse would.
+  function hover(el, on) {
+    const names = on
+      ? ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]
+      : ["pointerout", "pointerleave", "mouseout", "mouseleave"];
+    for (const type of names) {
+      const bubbles = !/enter|leave/.test(type);
+      const Ctor = type.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new Ctor(type, { bubbles, cancelable: true, composed: true, view: window }));
+    }
+  }
+
+  function reactionOption(emoji) {
+    for (const item of document.querySelectorAll(SELECTORS.reactionOption)) {
+      const img = item.querySelector("img[alt]");
+      if (img && lib.sameEmoji(img.getAttribute("alt"), emoji) && isVisible(item)) return item;
+    }
+    return null;
+  }
+
+  function reactionPickerOpen() {
+    return lib.REACTION_EMOJI.some((e) => reactionOption(e) !== null);
+  }
+
+  async function handleReact(id, n) {
+    const emoji = lib.reactionEmoji(n);
+    if (!emoji) return lib.errorMsg("invalid reaction number");
+    if (currentThreadId() !== id) return lib.errorMsg("a different conversation is open in the Messenger tab; not reacted");
+    if (!page.isSettled(id)) return lib.errorMsg("conversation still loading; not reacted");
+    const list = first(SELECTORS.messageList);
+    if (!list) throw new LayoutError();
+    const row = latestIncomingRow(list);
+    if (!row) return lib.errorMsg("no message from the other person to react to");
+
+    const toolbarButtons = () => {
+      const tb = row.querySelector(SELECTORS.messageToolbar);
+      return tb ? Array.from(tb.querySelectorAll(SELECTORS.toolbarButton)) : [];
+    };
+    const target = row.querySelector(SELECTORS.messageText) || row;
+    hover(target, true);
+    try {
+      if (!(await waitForDom(() => toolbarButtons().length >= 3, 2000))) {
+        return lib.errorMsg("couldn't reach the message's reaction button; not reacted");
+      }
+      toolbarButtons()[0].click();
+      if (!(await waitForDom(() => reactionOption(emoji) !== null, 2000))) {
+        return lib.errorMsg("the reaction picker didn't open; not reacted");
+      }
+      // Still the same chat and the same message? Then pick, once, never retry.
+      const option = reactionOption(emoji);
+      if (currentThreadId() !== id || !row.isConnected || !option) {
+        return lib.errorMsg("the conversation changed while reacting; not reacted");
+      }
+      option.click();
+      const closed = await waitForDom(() => !reactionPickerOpen(), 3000);
+      if (!closed) return { ...lib.errorMsg("reaction not confirmed; check the message in the Messenger tab"), unconfirmed: true };
+      return { type: "reacted", id };
+    } finally {
+      hover(target, false);
+    }
   }
 
   function composerFocused(composer) {
@@ -413,6 +514,8 @@
           return await handleOpen(cmd.id);
         case "send":
           return await handleSend(cmd.id, cmd.text);
+        case "react":
+          return await handleReact(cmd.id, cmd.n);
         default:
           return lib.errorMsg("unknown command");
       }

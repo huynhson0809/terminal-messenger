@@ -474,3 +474,68 @@ test("bidi control characters are stripped from remote text", () => {
   assert.equal(c.lines.length, 1);
   assert.doesNotMatch(c.lines[0], /[\u202a-\u202e\u2066-\u2069]/);
 });
+
+// ---- /react ---------------------------------------------------------------
+
+test("/react with no open conversation is refused and sends nothing", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await ctx.app.handleLine("/react 1");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines[0], /open a conversation first/);
+});
+
+test("/react while the conversation is still opening is refused", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await ctx.app.handleLine("/open 1");
+  ctx.sent.length = 0;
+  await ctx.app.handleLine("/react 1");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines.at(-1), /still opening/);
+});
+
+test("/react with the extension disconnected prints the notice and sends nothing", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx);
+  ctx.state.connected = false;
+  await ctx.app.handleLine("/react 2");
+  assert.deepEqual(ctx.sent, []);
+  assert.deepEqual(ctx.lines, [NOT_CONNECTED]);
+});
+
+test("/react n sends one react command for the open chat and reports reacted", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx, 2);
+  await ctx.app.handleLine("/react 3");
+  assert.equal(ctx.sent.length, 1);
+  const cmd = ctx.sent[0];
+  assert.equal(cmd.type, "react");
+  assert.equal(cmd.id, "b2");
+  assert.equal(cmd.n, 3);
+  assert.match(cmd.ref, /^r\d+$/);
+  ctx.app.handleExtensionMessage({ type: "reacted", id: "b2", ref: cmd.ref });
+  assert.match(ctx.lines.at(-1), /^reacted .*haha/);
+  assert.equal(ctx.timers.live().length, 0);
+});
+
+test("a failed reaction is reported as not reacted, not as not sent", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx);
+  await ctx.app.handleLine("/react 1");
+  const { ref } = ctx.sent[0];
+  ctx.app.handleExtensionMessage({ type: "error", message: "the reaction picker didn't open; not reacted", ref });
+  assert.match(ctx.lines.at(-1), /^not reacted .*like: the reaction picker didn't open/);
+});
+
+test("a reaction with no reply is reported as unconfirmed after the timeout", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx);
+  await ctx.app.handleLine("/react 5");
+  ctx.timers.fireAll();
+  assert.match(ctx.lines.at(-1), /no confirmation for reaction .*sad/);
+});

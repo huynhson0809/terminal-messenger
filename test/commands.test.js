@@ -41,3 +41,13 @@ test("/back and /quit", () => {
   assert.deepEqual(parseCommand("/back"), { kind: "back" });
   assert.deepEqual(parseCommand("/quit"), { kind: "quit" });
 });
+
+test("/react takes a number from 1 to 6", () => {
+  assert.deepEqual(parseCommand("/react 1"), { kind: "react", n: 1 });
+  assert.deepEqual(parseCommand("/react 6"), { kind: "react", n: 6 });
+  for (const bad of ["/react", "/react 0", "/react 7", "/react abc", "/react 1 2", "/react 10"]) {
+    const r = parseCommand(bad);
+    assert.equal(r.kind, "error", bad);
+    assert.match(r.message, /usage: \/react/);
+  }
+});

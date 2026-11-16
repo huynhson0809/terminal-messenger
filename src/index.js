@@ -54,7 +54,7 @@ async function shutdown() {
 }
 
 app = createApp({ bridge, print: (l) => console.log(l), queue, onQuit: shutdown });
-console.log("terminal-messenger ready: /list, /open <n>, /back, /quit");
+console.log("terminal-messenger ready: /list, /open <n>, /react <1-6>, /back, /quit");
 
 // A multi-line paste arrives as several lines within milliseconds; refuse
 // the whole burst instead of sending one message per line.

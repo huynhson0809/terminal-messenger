@@ -18,10 +18,16 @@ export function parseCommand(line) {
       }
       return { kind: "open", n: Number(args[0]) };
     }
+    case "/react": {
+      if (args.length !== 1 || !/^[1-6]$/.test(args[0])) {
+        return { kind: "error", message: "usage: /react <1-6>  (1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry)" };
+      }
+      return { kind: "react", n: Number(args[0]) };
+    }
     default:
       return {
         kind: "error",
-        message: `unknown command ${cmd} (try /list, /open <n>, /back, /quit; use // to start a message with a slash)`,
+        message: `unknown command ${cmd} (try /list, /open <n>, /react <1-6>, /back, /quit; use // to start a message with a slash)`,
       };
   }
 }

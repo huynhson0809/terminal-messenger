@@ -19,6 +19,9 @@ function cleanMessage(m) {
   return { from: clean(m.from), text: clean(m.text), ts: m.ts };
 }
 
+// /react <n>: the same numbering the extension uses.
+const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha", "\u{1F62E} wow", "\u{1F622} sad", "\u{1F621} angry"];
+
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
 const CONFIRM_TIMEOUT_MS = 20000;
 const SNIPPET_LEN = 30;
@@ -58,6 +61,9 @@ export function createApp({
   let refCounter = 0;
 
   function noConfirmation(p) {
+    if (p.kind === "react") {
+      return `no confirmation for reaction ${p.snip}; check the message in the Messenger tab before reacting again`;
+    }
     return `no confirmation for "${p.snip}"; run /open ${p.n} to check before resending`;
   }
 
@@ -103,6 +109,25 @@ export function createApp({
         }
         open = { id: chat.id, name: chat.name, confirmed: false };
         bridge.send({ type: "open", id: chat.id });
+        return;
+      }
+      case "react": {
+        if (!open) {
+          print("open a conversation first");
+          return;
+        }
+        if (!open.confirmed) {
+          print(`still opening ${clean(open.name)}; wait for its messages before reacting`);
+          return;
+        }
+        if (!requireConnection()) return;
+        const ref = `r${++refCounter}`;
+        const p = { snip: REACTION_LABELS[cmd.n - 1], n: 0, timer: null, kind: "react" };
+        pending.set(ref, p);
+        bridge.send({ type: "react", id: open.id, n: cmd.n, ref });
+        p.timer = setTimer(() => {
+          if (settle(ref)) print(noConfirmation(p));
+        }, confirmTimeoutMs);
         return;
       }
       case "send": {
@@ -176,10 +201,16 @@ export function createApp({
         print(p ? `sent: "${p.snip}"` : "sent");
         return;
       }
+      case "reacted": {
+        const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
+        print(p ? `reacted ${p.snip}` : "reacted");
+        return;
+      }
       case "error": {
         const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
         if (!p) print(`error: ${clean(msg.message)}`);
         else if (msg.unconfirmed === true) print(noConfirmation(p));
+        else if (p.kind === "react") print(`not reacted ${p.snip}: ${clean(msg.message)}`);
         else print(`not sent: "${p.snip}": ${clean(msg.message)}`);
         return;
       }

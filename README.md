@@ -18,6 +18,7 @@ Lost the token? Print it with `cat ~/.terminal-messenger/token`. To get a new on
 
 - `/list` shows your chats, numbered (`*` marks unread).
 - `/open <n>` opens chat number `n` from the last `/list` and shows recent messages.
+- `/react <1-6>` reacts to the newest message from the other person in the open conversation: 1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry. It prints `reacted ...` or `not reacted ...: reason`; it never retries.
 - `/back` closes the open conversation.
 - `/quit` exits.
 - Any other text sends a reply to the open conversation. A line starting with a single `/` is treated as a command.
