@@ -373,6 +373,7 @@
     focus: "couldn't focus the message box; not sent",
     typing: "couldn't type the message correctly; not sent (the text may still be in the message box)",
     lostFocus: "the message box lost focus; not sent (the text is still in the box)",
+    noSendButton: "couldn't find the send button; not sent (the text is still in the message box)",
     unconfirmed: "send not confirmed after 5 s; not retrying, run /open <n> to check before resending",
   });
 
@@ -380,7 +381,8 @@
   // it can be tested without a browser. content.js supplies the real one.
   //   page: pathname(), isSettled(id), findComposers(), textOf(box),
   //         focus(box), isFocused(box), isAttached(box), insertText(box, text),
-  //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>
+  //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>;
+//         optional beforeTyping(box), findSendButton(box) -> element|null, clickSend(el)
   //   gate: waitTurn(), markSent()   (createSendGate)
   // Every refusal happens before Enter. Enter is pressed at most once.
   async function performSend({
@@ -422,6 +424,7 @@
     // 3. Type into the real composer and verify exactly that text landed.
     page.focus(box);
     if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
+    if (page.beforeTyping) page.beforeTyping(box);
     const inserted = page.insertText(box, text);
     const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
     if (!typed) {
@@ -430,7 +433,13 @@
       return err(SEND_ERRORS.typing + info);
     }
 
-    // 4. Last re-check right before Enter.
+    // With a send button (page.findSendButton), it must have changed from its
+    // empty-box look to its has-text look; wait for that before the last check.
+    if (page.findSendButton) {
+      await page.waitFor(() => page.findSendButton(box) !== null, typeTimeoutMs);
+    }
+
+    // 4. Last re-check right before the send (no await after this point).
     const g = canSend(page.pathname(), id, text);
     if (!g.ok) return err(`${g.error} (the text is still in the message box)`);
     if (!page.isSettled(id)) return err(`${SEND_ERRORS.loading} (the text is still in the message box)`);
@@ -439,9 +448,13 @@
       return err(SEND_ERRORS.lostFocus);
     }
 
-    // 5. One Enter. Then wait for this chat's box to clear. Never retry.
-    gate.markSent(); // start-to-start gap: recorded as Enter is pressed
-    page.pressEnter(box);
+    // 5. One send: the send button if the page adapter has one, else one
+    //    Enter. Then wait for this chat's box to clear. Never retry.
+    const sendButton = page.findSendButton ? page.findSendButton(box) : null;
+    if (page.findSendButton && !sendButton) return err(SEND_ERRORS.noSendButton);
+    gate.markSent(); // start-to-start gap: recorded as the send is made
+    if (sendButton) page.clickSend(sendButton);
+    else page.pressEnter(box);
     const cleared = await page.waitFor(() => {
       if (threadIdFromPath(page.pathname()) !== id) return false;
       const now = page.findComposers();

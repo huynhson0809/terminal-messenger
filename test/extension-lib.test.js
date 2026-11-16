@@ -715,6 +715,35 @@ test("performSend happy path: types once, presses Enter exactly once, replies se
   assert.equal(gate.marks, 1);
 });
 
+test("performSend clicks the send button once instead of pressing Enter", async () => {
+  const page = fakePage();
+  const button = { id: "send" };
+  const clicks = [];
+  page.findSendButton = () => button;
+  page.clickSend = (b) => {
+    clicks.push(b);
+    page.boxes[0].text = "";
+  };
+  const gate = fakeGate(page);
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate });
+  assert.deepEqual(r, { type: "sent", id: "55" });
+  assert.deepEqual(clicks, [button]);
+  assert.equal(page.enters, 0);
+  assert.equal(gate.marks, 1);
+});
+
+test("performSend with no usable send button sends nothing and leaves the text", async () => {
+  const page = fakePage();
+  page.findSendButton = () => null;
+  page.clickSend = () => assert.fail("must not click");
+  const gate = fakeGate(page);
+  const r = await lib.performSend({ id: "55", text: "hello", page, gate });
+  assert.equal(r.type, "error");
+  assert.match(r.message, /send button/);
+  assert.equal(page.enters, 0);
+  assert.equal(gate.marks, 0);
+});
+
 test("performSend refuses during the settle window, typing nothing", async () => {
   const page = fakePage({ settled: false });
   const r = await lib.performSend({ id: "55", text: "hello", page, gate: fakeGate(page) });

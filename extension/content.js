@@ -48,6 +48,10 @@
     // Conversation title (used as the sender name in 1:1 chats).
     threadTitle: ['[role="main"] h1', '[role="main"] h2'],
 
+    // Buttons around the message box (emoji, send / like...). Their labels are
+    // localized, so the send button is found by position (see findSendButton).
+    composerButton: '[role="button"], button',
+
     // The message box (Lexical contenteditable).
     composer: '[role="main"] [role="textbox"][contenteditable="true"]',
 
@@ -305,7 +309,48 @@
 
   // Real-page adapter for lib.performSend, which holds the whole send-safety
   // sequence (and is unit-tested against a fake of this adapter).
+  // The send button: the rightmost button beside the message box. With an
+  // empty box that slot is the "send a like" button; once there is text it
+  // turns into the "send" button (and its label changes). A synthetic Enter
+  // is ignored by Facebook, so we click that button instead, but only if its
+  // label really changed after typing, so a like is never sent by mistake.
+  let sendSlotLabelBefore = null;
+
+  function composerButtons(box) {
+    let el = box;
+    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
+      const btns = Array.from(el.querySelectorAll(SELECTORS.composerButton)).filter((b) => !box.contains(b));
+      if (btns.length >= 3) return btns;
+    }
+    return [];
+  }
+
+  function sendSlotButton(box) {
+    const boxRight = box.getBoundingClientRect().right;
+    let best = null;
+    let bestLeft = -Infinity;
+    for (const b of composerButtons(box)) {
+      const r = b.getBoundingClientRect();
+      if (r.width > 0 && r.left >= boxRight && r.left > bestLeft) {
+        best = b;
+        bestLeft = r.left;
+      }
+    }
+    return best;
+  }
+
   const page = {
+    beforeTyping: (box) => {
+      const b = sendSlotButton(box);
+      sendSlotLabelBefore = b ? b.getAttribute("aria-label") : null;
+    },
+    findSendButton: (box) => {
+      const b = sendSlotButton(box);
+      const label = b && b.getAttribute("aria-label");
+      if (!b || !label || label === sendSlotLabelBefore) return null;
+      return b;
+    },
+    clickSend: (button) => button.click(),
     pathname: () => location.pathname,
     isSettled: (id) => baseline.threadId === id && Date.now() >= baseline.settleUntil,
     findComposers: () => Array.from(document.querySelectorAll(SELECTORS.composer)),
