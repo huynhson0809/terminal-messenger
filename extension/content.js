@@ -230,18 +230,40 @@
     return "";
   }
 
+  function rowInfo(row, list) {
+    const heading = textOf(row.querySelector(SELECTORS.senderHeading));
+    const outgoing = SELECTORS.outgoingHeading.test(heading) || isOwnByPosition(row, list, heading);
+    const text = innermost(row, SELECTORS.messageText)
+      .map(textOf)
+      .filter((t) => t && t !== heading)
+      .join(" ");
+    return { row, heading, outgoing, text, media: text ? null : mediaKind(row) };
+  }
+
+  // What the terminal prints for a row: its text, or a placeholder for media.
+  function displayText(info) {
+    return lib.cleanText(info.text) || lib.mediaPlaceholder(info.media);
+  }
+
+  // The rows that become messages (same rule as attributeSenders), oldest first.
+  function keptRows(list) {
+    return Array.from(list.querySelectorAll(SELECTORS.messageRow))
+      .map((row) => rowInfo(row, list))
+      .filter((info) => displayText(info));
+  }
+
   function readThreadMessages(fallbackName) {
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
     const rows = [];
     for (const row of list.querySelectorAll(SELECTORS.messageRow)) {
-      const heading = textOf(row.querySelector(SELECTORS.senderHeading));
-      const outgoing = SELECTORS.outgoingHeading.test(heading) || isOwnByPosition(row, list, heading);
-      const text = innermost(row, SELECTORS.messageText)
-        .map(textOf)
-        .filter((t) => t && t !== heading)
-        .join(" ");
-      rows.push({ outgoing, sender: outgoing ? null : heading || null, text, media: text ? null : mediaKind(row) });
+      const info = rowInfo(row, list);
+      rows.push({
+        outgoing: info.outgoing,
+        sender: info.outgoing ? null : info.heading || null,
+        text: info.text,
+        media: info.media,
+      });
     }
     return lib.attributeSenders(rows, fallbackName);
   }
@@ -349,27 +371,50 @@
     return lib.REACTION_EMOJI.some((e) => reactionOption(e) !== null);
   }
 
-  async function handleReact(id, n) {
+  // The message a command names: by its position from the newest and the start
+  // of its text (both must agree), or the newest message from the other person.
+  function resolveTarget(list, target) {
+    if (!target) {
+      const row = latestIncomingRow(list);
+      return row ? { row } : { error: "no message from the other person to react to" };
+    }
+    const kept = keptRows(list);
+    const info = kept[kept.length - 1 - target.fromEnd];
+    if (!info || !lib.textMatchesSnippet(displayText(info), target.text)) {
+      return { error: "that message isn't where it was (new messages or older ones loaded); run /open again" };
+    }
+    return { row: info.row, text: displayText(info) };
+  }
+
+  // Message toolbar buttons only exist while the page thinks the mouse is over
+  // the message: first is react, second is reply, third is more actions.
+  const TOOLBAR_REACT = 0;
+  const TOOLBAR_REPLY = 1;
+
+  function toolbarButtonsOf(row) {
+    const tb = row.querySelector(SELECTORS.messageToolbar);
+    return tb ? Array.from(tb.querySelectorAll(SELECTORS.toolbarButton)) : [];
+  }
+
+  async function handleReact(id, n, targetSpec) {
     const emoji = lib.reactionEmoji(n);
     if (!emoji) return lib.errorMsg("invalid reaction number");
     if (currentThreadId() !== id) return lib.errorMsg("a different conversation is open in the Messenger tab; not reacted");
     if (!page.isSettled(id)) return lib.errorMsg("conversation still loading; not reacted");
     const list = first(SELECTORS.messageList);
     if (!list) throw new LayoutError();
-    const row = latestIncomingRow(list);
-    if (!row) return lib.errorMsg("no message from the other person to react to");
+    const resolved = resolveTarget(list, targetSpec);
+    if (resolved.error) return lib.errorMsg(`${resolved.error}; not reacted`);
+    const row = resolved.row;
 
-    const toolbarButtons = () => {
-      const tb = row.querySelector(SELECTORS.messageToolbar);
-      return tb ? Array.from(tb.querySelectorAll(SELECTORS.toolbarButton)) : [];
-    };
+    const toolbarButtons = () => toolbarButtonsOf(row);
     const target = row.querySelector(SELECTORS.messageText) || row;
     hover(target, true);
     try {
       if (!(await waitForDom(() => toolbarButtons().length >= 3, 2000))) {
         return lib.errorMsg("couldn't reach the message's reaction button; not reacted");
       }
-      toolbarButtons()[0].click();
+      toolbarButtons()[TOOLBAR_REACT].click();
       if (!(await waitForDom(() => reactionOption(emoji) !== null, 2000))) {
         return lib.errorMsg("the reaction picker didn't open; not reacted");
       }
@@ -385,6 +430,89 @@
     } finally {
       hover(target, false);
     }
+  }
+
+  // Opens the reply box for one message (the toolbar's reply button), then
+  // proves it: the quoted message's text must now appear in the area around
+  // the message box. Returns null on success or an error message.
+  async function prepareReply(id, targetSpec) {
+    if (currentThreadId() !== id) return "a different conversation is open in the Messenger tab";
+    if (!page.isSettled(id)) return "conversation still loading";
+    const list = first(SELECTORS.messageList);
+    if (!list) throw new LayoutError();
+    const resolved = resolveTarget(list, targetSpec);
+    if (resolved.error) return resolved.error;
+    const quoted = resolved.text;
+    if (/^\[(image|video|audio|attachment)\]$/.test(quoted)) return "can't reply to a message that has no text";
+    const row = resolved.row;
+    const composers = page.findComposers();
+    if (composers.length !== 1) return lib.LAYOUT_ERROR;
+    const box = composers[0];
+    if (lib.cleanText(box.textContent) !== "") return "the message box in the Messenger tab is not empty";
+    const target = row.querySelector(SELECTORS.messageText) || row;
+    hover(target, true);
+    try {
+      if (!(await waitForDom(() => toolbarButtonsOf(row).length >= 3, 2000))) {
+        return "couldn't reach the message's reply button";
+      }
+      toolbarButtonsOf(row)[TOOLBAR_REPLY].click();
+    } finally {
+      hover(target, false);
+    }
+    // The quoted text shows up in the composer's own area, which does not
+    // contain the message list (so the list's copy of the text can't match).
+    const snippet = quoted.slice(0, 20);
+    const bannerShown = () => {
+      for (let el = box.parentElement; el && !el.contains(list); el = el.parentElement) {
+        if (lib.cleanText(el.textContent).toLowerCase().includes(snippet.toLowerCase())) return true;
+      }
+      return false;
+    };
+    if (!(await waitForDom(bannerShown, 2500))) return "the reply box didn't open";
+    return null;
+  }
+
+  async function handleReply(id, text, targetSpec) {
+    const problem = await prepareReply(id, targetSpec);
+    if (problem) return lib.errorMsg(`${problem}; not sent`);
+    const reply = await handleSend(id, text);
+    if (reply.type === "error" && !reply.unconfirmed) {
+      return { ...reply, message: `${reply.message} (the reply box may still be open in the Messenger tab)` };
+    }
+    return reply;
+  }
+
+  // ---- loading older messages -----------------------------------------------
+
+  function findScroller(list) {
+    for (let el = list; el && el !== document.body; el = el.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 10) return el;
+    }
+    return null;
+  }
+
+  async function handleMore(id) {
+    if (currentThreadId() !== id) return lib.errorMsg("a different conversation is open in the Messenger tab");
+    const list = first(SELECTORS.messageList);
+    if (!list) throw new LayoutError();
+    const scroller = findScroller(list);
+    if (!scroller) return lib.errorMsg("couldn't find the message list to scroll");
+    const count = () => list.querySelectorAll(SELECTORS.messageRow).length;
+    const before = count();
+    scroller.scrollTop = 0;
+    // Facebook loads the older page when the top is reached. If nothing more
+    // arrives, there is nothing older.
+    await waitForDom(() => count() > before, 6000);
+    await lib.waitForQuiet({
+      quietMs: OPEN_QUIET_MS,
+      maxMs: OPEN_QUIET_MAX_MS,
+      subscribe: (cb) => domChanges(cb, list),
+    });
+    const name = threadName(id);
+    const messages = readThreadMessages(name);
+    scroller.scrollTop = scroller.scrollHeight; // back to the newest
+    resetBaseline(id, messages);
+    return lib.buildMessages(id, messages, paneTitle(name), { limit: lib.LIMITS.MAX_MORE_MESSAGES, older: true });
   }
 
   function composerFocused(composer) {
@@ -515,7 +643,11 @@
         case "send":
           return await handleSend(cmd.id, cmd.text);
         case "react":
-          return await handleReact(cmd.id, cmd.n);
+          return await handleReact(cmd.id, cmd.n, cmd.target);
+        case "reply":
+          return await handleReply(cmd.id, cmd.text, cmd.target);
+        case "more":
+          return await handleMore(cmd.id);
         default:
           return lib.errorMsg("unknown command");
       }

@@ -25,6 +25,7 @@ const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha"
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
 const CONFIRM_TIMEOUT_MS = 20000;
 const SNIPPET_LEN = 30;
+const TARGET_LEN = 40; // how much of a message's text names it to the extension
 
 function snippet(text) {
   const t = clean(text);
@@ -34,9 +35,9 @@ function snippet(text) {
 // The queue's send function. Checks the connection at send time (not only at
 // enqueue time) so a dropped extension is reported instead of a silent no-op.
 export function createBridgeSender(bridge) {
-  return async ({ id, text, ref }) => {
+  return async ({ id, text, ref, target }) => {
     if (!bridge.isConnected()) throw new Error("extension not connected");
-    bridge.send({ type: "send", id, text, ref });
+    bridge.send(target ? { type: "reply", id, text, target, ref } : { type: "send", id, text, ref });
   };
 }
 
@@ -47,6 +48,7 @@ export function createApp({
   print,
   queue,
   onQuit = () => {},
+  onClear = () => {},
   confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -56,6 +58,9 @@ export function createApp({
   // reply for this id arrives, so replies can't go out while the tab is
   // still switching chats.
   let open = null;
+  // The open chat's messages as printed, oldest first. A message's number in
+  // the terminal is its position here (1 = oldest).
+  let thread = [];
   // ref -> { snip, n, timer }: sends waiting for `sent` / `error`.
   const pending = new Map();
   let refCounter = 0;
@@ -81,6 +86,31 @@ export function createApp({
     return false;
   }
 
+  function numbered(n, m) {
+    return `[${n}] ${renderMessage(m)}`;
+  }
+
+  // Names a printed message to the extension: position from the newest, plus
+  // the start of its text (the extension checks both before acting).
+  function targetFor(msgNo) {
+    const m = thread[msgNo - 1];
+    if (!m) return null;
+    return { fromEnd: thread.length - msgNo, text: m.text.slice(0, TARGET_LEN) };
+  }
+
+  // Common checks for commands that act on the open conversation.
+  function requireOpen(what) {
+    if (!open) {
+      print("open a conversation first");
+      return false;
+    }
+    if (!open.confirmed) {
+      print(`still opening ${clean(open.name)}; wait for its messages before ${what}`);
+      return false;
+    }
+    return requireConnection();
+  }
+
   async function handleLine(line) {
     const cmd = parseCommand(line);
     switch (cmd.kind) {
@@ -92,8 +122,12 @@ export function createApp({
       case "quit":
         await onQuit();
         return;
+      case "clear":
+        onClear();
+        return;
       case "back":
         open = null;
+        thread = [];
         print("closed conversation");
         return;
       case "list":
@@ -108,26 +142,43 @@ export function createApp({
           return;
         }
         open = { id: chat.id, name: chat.name, confirmed: false };
+        thread = [];
         bridge.send({ type: "open", id: chat.id });
         return;
       }
+      case "more": {
+        if (!requireOpen("loading older messages")) return;
+        print("loading older messages...");
+        bridge.send({ type: "more", id: open.id });
+        return;
+      }
       case "react": {
-        if (!open) {
-          print("open a conversation first");
-          return;
+        if (!requireOpen("reacting")) return;
+        let target;
+        if (cmd.msg !== undefined) {
+          target = targetFor(cmd.msg);
+          if (!target) {
+            print(`error: no message ${cmd.msg} (run /open or /more to see message numbers)`);
+            return;
+          }
         }
-        if (!open.confirmed) {
-          print(`still opening ${clean(open.name)}; wait for its messages before reacting`);
-          return;
-        }
-        if (!requireConnection()) return;
         const ref = `r${++refCounter}`;
         const p = { snip: REACTION_LABELS[cmd.n - 1], n: 0, timer: null, kind: "react" };
         pending.set(ref, p);
-        bridge.send({ type: "react", id: open.id, n: cmd.n, ref });
+        bridge.send(target ? { type: "react", id: open.id, n: cmd.n, ref, target } : { type: "react", id: open.id, n: cmd.n, ref });
         p.timer = setTimer(() => {
           if (settle(ref)) print(noConfirmation(p));
         }, confirmTimeoutMs);
+        return;
+      }
+      case "reply": {
+        if (!requireOpen("replying")) return;
+        const target = targetFor(cmd.msg);
+        if (!target) {
+          print(`error: no message ${cmd.msg} (run /open or /more to see message numbers)`);
+          return;
+        }
+        await sendText(cmd.text, target);
         return;
       }
       case "send": {
@@ -140,25 +191,30 @@ export function createApp({
           return;
         }
         if (!requireConnection()) return;
-        const ref = `s${++refCounter}`;
-        const index = chats.findIndex((c) => c.id === open.id);
-        const p = { snip: snippet(cmd.text), n: index === -1 ? "<n>" : index + 1, timer: null };
-        pending.set(ref, p);
-        try {
-          await queue.enqueue({ id: open.id, text: cmd.text, ref });
-        } catch (err) {
-          settle(ref);
-          print(`send failed: "${p.snip}": ${err?.message ?? err}`);
-          return;
-        }
-        // The reply may already have arrived; only time out a still-pending send.
-        if (pending.get(ref) === p) {
-          p.timer = setTimer(() => {
-            if (settle(ref)) print(noConfirmation(p));
-          }, confirmTimeoutMs);
-        }
+        await sendText(cmd.text, undefined);
         return;
       }
+    }
+  }
+
+  // One text message (or a reply to `target`) through the queue.
+  async function sendText(text, target) {
+    const ref = `s${++refCounter}`;
+    const index = chats.findIndex((c) => c.id === open.id);
+    const p = { snip: snippet(text), n: index === -1 ? "<n>" : index + 1, timer: null, text, chatId: open.id };
+    pending.set(ref, p);
+    try {
+      await queue.enqueue(target ? { id: open.id, text, ref, target } : { id: open.id, text, ref });
+    } catch (err) {
+      settle(ref);
+      print(`send failed: "${p.snip}": ${err?.message ?? err}`);
+      return;
+    }
+    // The reply may already have arrived; only time out a still-pending send.
+    if (pending.get(ref) === p) {
+      p.timer = setTimer(() => {
+        if (settle(ref)) print(noConfirmation(p));
+      }, confirmTimeoutMs);
     }
   }
 
@@ -183,21 +239,39 @@ export function createApp({
       case "messages": {
         if (!open || msg.id !== open.id) return;
         if (!Array.isArray(msg.messages)) throw new Error("messages not an array");
-        const lines = msg.messages.map((m) => renderMessage(cleanMessage(m)));
+        const next = msg.messages.map(cleanMessage);
+        if (msg.older === true) {
+          // Reply to /more: the full list, with older messages at the front.
+          const added = next.length - thread.length;
+          thread = next;
+          if (added <= 0) {
+            print("no older messages");
+            return;
+          }
+          print(`-- ${added} older message${added === 1 ? "" : "s"} (message numbers have shifted by ${added}) --`);
+          for (let i = 0; i < added; i++) print(numbered(i + 1, thread[i]));
+          return;
+        }
+        thread = next;
         open.confirmed = true;
         // The tab's own pane title, to cross-check against the /list name.
         print(`-- ${clean(msg.title).trim() || "(title unreadable)"} --`);
-        for (const l of lines) print(l);
+        thread.forEach((m, i) => print(numbered(i + 1, m)));
         return;
       }
       case "incoming": {
         const m = cleanMessage(msg.message);
-        if (open && msg.id === open.id) print(renderMessage(m));
-        else print(`[new] ${renderMessage(m, clean(msg.name) || undefined)}`);
+        if (open && msg.id === open.id) {
+          thread.push(m);
+          print(numbered(thread.length, m));
+        } else print(`[new] ${renderMessage(m, clean(msg.name) || undefined)}`);
         return;
       }
       case "sent": {
         const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
+        // The sent message is now the newest row in the chat; keep message
+        // numbers aligned with the page.
+        if (p && p.text !== undefined && open && p.chatId === open.id) thread.push({ from: "you", text: clean(p.text) });
         print(p ? `sent: "${p.snip}"` : "sent");
         return;
       }

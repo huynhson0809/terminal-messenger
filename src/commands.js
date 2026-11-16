@@ -5,6 +5,11 @@ export function parseCommand(line) {
   if (!trimmed.startsWith("/")) return { kind: "send", text: trimmed };
 
   const [cmd, ...args] = trimmed.split(/\s+/);
+  if (cmd === "/reply") {
+    const m = /^\/reply\s+(\d+)\s+([\s\S]+)$/.exec(trimmed);
+    if (!m || Number(m[1]) < 1) return { kind: "error", message: "usage: /reply <message number> <text>" };
+    return { kind: "reply", msg: Number(m[1]), text: m[2].trim() };
+  }
   switch (cmd) {
     case "/list":
       return { kind: "list" };
@@ -18,16 +23,22 @@ export function parseCommand(line) {
       }
       return { kind: "open", n: Number(args[0]) };
     }
+    case "/clear":
+      return { kind: "clear" };
+    case "/more":
+      return { kind: "more" };
     case "/react": {
-      if (args.length !== 1 || !/^[1-6]$/.test(args[0])) {
-        return { kind: "error", message: "usage: /react <1-6>  (1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry)" };
-      }
-      return { kind: "react", n: Number(args[0]) };
+      const usage = "usage: /react <1-6> [message number]  (1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry)";
+      if (args.length < 1 || args.length > 2 || !/^[1-6]$/.test(args[0])) return { kind: "error", message: usage };
+      if (args.length === 2 && (!/^\d+$/.test(args[1]) || Number(args[1]) < 1)) return { kind: "error", message: usage };
+      return args.length === 2
+        ? { kind: "react", n: Number(args[0]), msg: Number(args[1]) }
+        : { kind: "react", n: Number(args[0]) };
     }
     default:
       return {
         kind: "error",
-        message: `unknown command ${cmd} (try /list, /open <n>, /react <1-6>, /back, /quit; use // to start a message with a slash)`,
+        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /back, /quit; use // to start a message with a slash)`,
       };
   }
 }

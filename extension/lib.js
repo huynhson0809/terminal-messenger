@@ -17,6 +17,8 @@
     MAX_NAME_LEN: 200,
     MAX_PREVIEW_LEN: 300,
     MAX_MESSAGES: 30,
+    MAX_MORE_MESSAGES: 100, // what /more may return after loading older messages
+    MAX_TARGET_TEXT: 200, // longest message-text snippet used to verify a target
     SEND_CONFIRM_TIMEOUT_MS: 5000,
     MIN_SEND_GAP_MS: 1000, // between Enter presses, start to start
     MIN_MEDIA_PX: 48, // smaller images are avatars / read receipts, not messages
@@ -168,11 +170,40 @@
 
   // title: the chat pane's own heading, so the terminal can show it and the
   // user can cross-check it against the name they picked from /list.
-  function buildMessages(id, messages, title) {
-    const list = (messages || []).slice(-LIMITS.MAX_MESSAGES).map(buildMessage);
+  function buildMessages(id, messages, title, opts = {}) {
+    const limit = opts.limit || LIMITS.MAX_MESSAGES;
+    const list = (messages || []).slice(-limit).map(buildMessage);
     const out = { type: "messages", id, messages: list };
     if (title !== undefined) out.title = cleanText(title, LIMITS.MAX_NAME_LEN);
+    if (opts.older) out.older = true;
     return out;
+  }
+
+  // A target message is named by its position from the newest one (0 = the
+  // newest) plus the start of its text. The position finds it, the text proves
+  // it is still the message the user saw; if they disagree nothing is done.
+  function isValidTarget(t) {
+    return (
+      Boolean(t) &&
+      typeof t === "object" &&
+      Number.isInteger(t.fromEnd) &&
+      t.fromEnd >= 0 &&
+      t.fromEnd <= 1000 &&
+      typeof t.text === "string" &&
+      t.text.length > 0 &&
+      t.text.length <= LIMITS.MAX_TARGET_TEXT
+    );
+  }
+
+  function normalizeSnippet(text) {
+    return String(text ?? "").replace(ZERO_WIDTH_RE, "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  // True when the row's text starts with the snippet (the terminal sends the
+  // first characters of what it printed).
+  function textMatchesSnippet(rowText, snippet) {
+    const want = normalizeSnippet(snippet);
+    return want !== "" && normalizeSnippet(rowText).startsWith(want);
   }
 
   // A reply belongs to a terminal send via its `ref`.
@@ -265,16 +296,31 @@
             ? { type: "send", id: msg.id, text: msg.text }
             : { type: "send", id: msg.id, text: msg.text, ref: msg.ref },
         };
-      case "react":
+      case "react": {
         if (!isValidId(msg.id)) return { ok: false, error: "invalid conversation id" };
         if (reactionEmoji(msg.n) === null) return { ok: false, error: "invalid reaction number" };
         if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
-        return {
-          ok: true,
-          cmd: msg.ref === undefined
-            ? { type: "react", id: msg.id, n: msg.n }
-            : { type: "react", id: msg.id, n: msg.n, ref: msg.ref },
-        };
+        if (msg.target !== undefined && !isValidTarget(msg.target)) return { ok: false, error: "invalid target message" };
+        const cmd = { type: "react", id: msg.id, n: msg.n };
+        if (msg.ref !== undefined) cmd.ref = msg.ref;
+        if (msg.target !== undefined) cmd.target = { fromEnd: msg.target.fromEnd, text: msg.target.text };
+        return { ok: true, cmd };
+      }
+      case "reply": {
+        if (!isValidId(msg.id)) return { ok: false, error: "invalid conversation id" };
+        if (typeof msg.text !== "string") return { ok: false, error: "message text missing" };
+        if (msg.text.length > LIMITS.MAX_SEND_LEN) {
+          return { ok: false, error: `message too long (max ${LIMITS.MAX_SEND_LEN} characters)` };
+        }
+        if (!isValidTarget(msg.target)) return { ok: false, error: "invalid target message" };
+        if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
+        const cmd = { type: "reply", id: msg.id, text: msg.text, target: { fromEnd: msg.target.fromEnd, text: msg.target.text } };
+        if (msg.ref !== undefined) cmd.ref = msg.ref;
+        return { ok: true, cmd };
+      }
+      case "more":
+        if (!isValidId(msg.id)) return { ok: false, error: "invalid conversation id" };
+        return { ok: true, cmd: { type: "more", id: msg.id } };
       default:
         return { ok: false, error: "unknown command" };
     }
@@ -547,6 +593,8 @@
     incomingOnly,
     diffUnreadChats,
     validateCommand,
+    isValidTarget,
+    textMatchesSnippet,
     REACTION_EMOJI,
     reactionEmoji,
     sameEmoji,

@@ -885,3 +885,44 @@ test("reaction numbers map to the six picker emoji, matched by alt text without 
   assert.equal(lib.sameEmoji("\u{1F606}", "❤"), false);
   assert.equal(lib.sameEmoji(null, "❤"), false);
 });
+
+// ---- reply / more / react target ------------------------------------------------
+
+test("validateCommand: react with a target, reply and more", () => {
+  const target = { fromEnd: 2, text: "first message" };
+  assert.deepEqual(lib.validateCommand({ type: "react", id: "55", n: 1, target }), {
+    ok: true,
+    cmd: { type: "react", id: "55", n: 1, target },
+  });
+  assert.deepEqual(lib.validateCommand({ type: "reply", id: "55", text: "hi", target, ref: "s1" }), {
+    ok: true,
+    cmd: { type: "reply", id: "55", text: "hi", target, ref: "s1" },
+  });
+  assert.deepEqual(lib.validateCommand({ type: "more", id: "55" }), { ok: true, cmd: { type: "more", id: "55" } });
+  for (const bad of [
+    { type: "reply", id: "55", text: "hi" }, // no target
+    { type: "reply", id: "55", text: "hi", target: { fromEnd: -1, text: "x" } },
+    { type: "reply", id: "55", text: "hi", target: { fromEnd: 1.5, text: "x" } },
+    { type: "reply", id: "55", text: "hi", target: { fromEnd: 1, text: "" } },
+    { type: "react", id: "55", n: 1, target: { fromEnd: 1 } },
+    { type: "more", id: "" },
+  ]) {
+    assert.equal(lib.validateCommand(bad).ok, false, JSON.stringify(bad));
+  }
+});
+
+test("textMatchesSnippet compares the start of the text, ignoring case and spacing", () => {
+  assert.equal(lib.textMatchesSnippet("Third  one here, really", "third one here"), true);
+  assert.equal(lib.textMatchesSnippet("something else", "third one here"), false);
+  assert.equal(lib.textMatchesSnippet("anything", ""), false);
+  assert.equal(lib.textMatchesSnippet("[image]", "[image]"), true);
+});
+
+test("buildMessages for /more can return more than the usual 30 and is flagged older", () => {
+  const msgs = Array.from({ length: 60 }, (_, i) => ({ from: "A", text: "m" + i }));
+  assert.equal(lib.buildMessages("55", msgs, "T").messages.length, 30);
+  const more = lib.buildMessages("55", msgs, "T", { limit: lib.LIMITS.MAX_MORE_MESSAGES, older: true });
+  assert.equal(more.messages.length, 60);
+  assert.equal(more.older, true);
+  assert.equal(lib.buildMessages("55", msgs, "T").older, undefined);
+});

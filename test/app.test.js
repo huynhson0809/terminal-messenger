@@ -194,7 +194,7 @@ test("messages for open conversation are printed", async () => {
     ],
     title: "Alice",
   });
-  assert.deepEqual(c.lines, ["-- Alice --", "Alice: one", "me: two"]);
+  assert.deepEqual(c.lines, ["-- Alice --", "[1] Alice: one", "[2] me: two"]);
 });
 
 test("incoming for open conversation prints message line", async () => {
@@ -208,7 +208,7 @@ test("incoming for open conversation prints message line", async () => {
     name: "Alice",
     message: { from: "Alice", text: "ping", ts: 3 },
   });
-  assert.deepEqual(c.lines, ["Alice: ping"]);
+  assert.deepEqual(c.lines, ["[1] Alice: ping"]);
 });
 
 test("incoming for another conversation prints [new] notice", async () => {
@@ -538,4 +538,131 @@ test("a reaction with no reply is reported as unconfirmed after the timeout", as
   await ctx.app.handleLine("/react 5");
   ctx.timers.fireAll();
   assert.match(ctx.lines.at(-1), /no confirmation for reaction .*sad/);
+});
+
+// ---- message numbers, /more, /reply, /react <n> <msg#>, /clear -----------------
+
+const THREAD = [
+  { from: "Alice", text: "first message", ts: 1 },
+  { from: "me", text: "second", ts: 2 },
+  { from: "Alice", text: "third one here", ts: 3 },
+];
+
+async function openWithMessages(ctx) {
+  await ctx.app.handleLine("/open 1");
+  ctx.app.handleExtensionMessage({ type: "messages", id: "a1", title: "Alice", messages: THREAD });
+  ctx.sent.length = 0;
+  ctx.lines.length = 0;
+}
+
+test("/clear calls onClear and sends nothing", async () => {
+  let cleared = 0;
+  const sent = [];
+  const app = createApp({
+    bridge: { send: (m) => sent.push(m), isConnected: () => true },
+    print: () => {},
+    queue: { enqueue: async () => {} },
+    onClear: () => cleared++,
+  });
+  await app.handleLine("/clear");
+  assert.equal(cleared, 1);
+  assert.deepEqual(sent, []);
+});
+
+test("/react 2 N targets the Nth printed message by position from the newest and its text", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("/react 2 1");
+  assert.equal(ctx.sent.length, 1);
+  assert.equal(ctx.sent[0].type, "react");
+  assert.equal(ctx.sent[0].n, 2);
+  assert.deepEqual(ctx.sent[0].target, { fromEnd: 2, text: "first message" });
+  await ctx.app.handleLine("/react 1 3");
+  assert.deepEqual(ctx.sent[1].target, { fromEnd: 0, text: "third one here" });
+});
+
+test("/react with a message number that does not exist sends nothing", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("/react 1 9");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines.at(-1), /no message 9/);
+});
+
+test("/reply N text goes through the queue with its target and a ref", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("/reply 1 sounds good");
+  assert.equal(ctx.sent.length, 1);
+  assert.equal(ctx.sent[0].type, "send"); // the test queue sends a plain send; target is on the queued item
+});
+
+test("createBridgeSender turns a queued item with a target into a reply command", async () => {
+  const sent = [];
+  const send = createBridgeSender({ send: (m) => sent.push(m), isConnected: () => true });
+  await send({ id: "a1", text: "hi", ref: "s1", target: { fromEnd: 1, text: "yo" } });
+  await send({ id: "a1", text: "hi", ref: "s2" });
+  assert.deepEqual(sent, [
+    { type: "reply", id: "a1", text: "hi", target: { fromEnd: 1, text: "yo" }, ref: "s1" },
+    { type: "send", id: "a1", text: "hi", ref: "s2" },
+  ]);
+});
+
+test("/reply to a message number that does not exist sends nothing", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("/reply 7 hi");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines.at(-1), /no message 7/);
+});
+
+test("/more needs an open, confirmed, connected conversation", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await ctx.app.handleLine("/more");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines.at(-1), /open a conversation first/);
+  await openWithMessages(ctx);
+  ctx.state.connected = false;
+  await ctx.app.handleLine("/more");
+  assert.deepEqual(ctx.sent, []);
+  ctx.state.connected = true;
+  await ctx.app.handleLine("/more");
+  assert.deepEqual(ctx.sent, [{ type: "more", id: "a1" }]);
+});
+
+test("older messages are printed at the front with shifted numbers; no older says so", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  const older = [
+    { from: "Alice", text: "oldest", ts: 0 },
+    { from: "Alice", text: "older", ts: 0 },
+  ];
+  ctx.app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [...older, ...THREAD] });
+  assert.match(ctx.lines[0], /2 older messages.*shifted by 2/);
+  assert.deepEqual(ctx.lines.slice(1), ["[1] Alice: oldest", "[2] Alice: older"]);
+  // numbering follows the new list: message 3 is now the old first one
+  ctx.sent.length = 0;
+  await ctx.app.handleLine("/react 1 3");
+  assert.deepEqual(ctx.sent[0].target, { fromEnd: 2, text: "first message" });
+  ctx.lines.length = 0;
+  ctx.app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [...older, ...THREAD] });
+  assert.deepEqual(ctx.lines, ["no older messages"]);
+});
+
+test("a confirmed send is added to the thread so message numbers stay aligned", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openWithMessages(ctx);
+  await ctx.app.handleLine("brand new reply");
+  const ref = ctx.sent[0].ref;
+  ctx.app.handleExtensionMessage({ type: "sent", id: "a1", ref });
+  ctx.sent.length = 0;
+  await ctx.app.handleLine("/react 1 4");
+  assert.deepEqual(ctx.sent[0].target, { fromEnd: 0, text: "brand new reply" });
 });

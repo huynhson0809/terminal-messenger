@@ -18,7 +18,13 @@ Lost the token? Print it with `cat ~/.terminal-messenger/token`. To get a new on
 
 - `/list` shows your chats, numbered (`*` marks unread).
 - `/open <n>` opens chat number `n` from the last `/list` and shows recent messages.
-- `/react <1-6>` reacts to the newest message from the other person in the open conversation: 1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry. It prints `reacted ...` or `not reacted ...: reason`; it never retries.
+- Every message in the open conversation is printed with a number: `[12] Name: text`.
+- `/react <1-6>` reacts to the newest message from the other person: 1 like, 2 love, 3 haha, 4 wow, 5 sad, 6 angry. `/react <1-6> <message number>` reacts to that message instead. It prints `reacted ...` or `not reacted ...: reason`; it never retries.
+- `/reply <message number> <text>` sends `<text>` as a reply to that message (Messenger's "reply" quote).
+- `/more` loads older messages (it scrolls the chat up in the tab). Older messages are printed at the front and the message numbers shift by their count, which it tells you.
+- `/clear` clears the terminal screen and its scrollback.
+
+Before acting on a numbered message, the extension checks that the message at that position still starts with the text you saw. If new or older messages moved things around it refuses (`that message isn't where it was ... run /open again`) instead of guessing. A reply to a message that has no text (an image, say) is refused.
 - `/back` closes the open conversation.
 - `/quit` exits.
 - Any other text sends a reply to the open conversation. A line starting with a single `/` is treated as a command.
