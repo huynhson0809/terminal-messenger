@@ -121,6 +121,15 @@
     return want !== "" && normalizeComposer(composerText) === want;
   }
 
+  // Facebook shows an unread chat's name and preview in bold (computed
+  // font-weight 600; read chats are 500 and 400), in any interface language.
+  const UNREAD_FONT_WEIGHT = 600;
+
+  function isUnreadFontWeight(weight) {
+    const n = Number(weight);
+    return Number.isFinite(n) && n >= UNREAD_FONT_WEIGHT;
+  }
+
   function buildChat(raw) {
     if (!raw || !isValidId(raw.id)) return null;
     return {
@@ -594,6 +603,7 @@
     diffUnreadChats,
     validateCommand,
     isValidTarget,
+    isUnreadFontWeight,
     textMatchesSnippet,
     REACTION_EMOJI,
     reactionEmoji,

@@ -926,3 +926,12 @@ test("buildMessages for /more can return more than the usual 30 and is flagged o
   assert.equal(more.older, true);
   assert.equal(lib.buildMessages("55", msgs, "T").older, undefined);
 });
+
+test("an unread chat is recognised by bold text (font-weight 600+), not by words", () => {
+  assert.equal(lib.isUnreadFontWeight("600"), true);
+  assert.equal(lib.isUnreadFontWeight(700), true);
+  assert.equal(lib.isUnreadFontWeight("500"), false);
+  assert.equal(lib.isUnreadFontWeight("400"), false);
+  assert.equal(lib.isUnreadFontWeight(""), false);
+  assert.equal(lib.isUnreadFontWeight(undefined), false);
+});

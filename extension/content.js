@@ -164,6 +164,8 @@
           unread = true;
           continue;
         }
+        // The name and preview (the first two texts) are bold on unread chats.
+        if (texts.length < 2 && lib.isUnreadFontWeight(getComputedStyle(span).fontWeight)) unread = true;
         if (!texts.includes(t)) texts.push(t);
       }
       const chat = lib.buildChat({ id, name: texts[0], preview: texts[1] || "", unread });
