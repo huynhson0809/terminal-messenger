@@ -644,8 +644,15 @@ test("older messages are printed at the front with shifted numbers; no older say
     { from: "Alice", text: "older", ts: 0 },
   ];
   ctx.app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [...older, ...THREAD] });
-  assert.match(ctx.lines[0], /2 older messages.*shifted by 2/);
-  assert.deepEqual(ctx.lines.slice(1), ["[1] Alice: oldest", "[2] Alice: older"]);
+  assert.deepEqual(ctx.lines, [
+    "-- Alice --",
+    "[1] Alice: oldest",
+    "[2] Alice: older",
+    "[3] Alice: first message",
+    "[4] me: second",
+    "[5] Alice: third one here",
+    "(2 older messages added at the top; message numbers shifted by 2)",
+  ]);
   // numbering follows the new list: message 3 is now the old first one
   ctx.sent.length = 0;
   await ctx.app.handleLine("/react 1 3");
@@ -678,8 +685,15 @@ test("a /more window that overlaps only the start of what is shown is merged in 
     { from: "x", text: "second", ts: 2 },
   ];
   ctx.app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: chunk });
-  assert.match(ctx.lines[0], /2 older messages.*shifted by 2/);
-  assert.deepEqual(ctx.lines.slice(1), ["[1] x: way back", "[2] x: a bit back"]);
+  assert.equal(ctx.lines[0], "-- Alice --");
+  assert.deepEqual(ctx.lines.slice(1, 6), [
+    "[1] x: way back",
+    "[2] x: a bit back",
+    "[3] Alice: first message",
+    "[4] me: second",
+    "[5] Alice: third one here",
+  ]);
+  assert.match(ctx.lines.at(-1), /2 older messages added at the top/);
 });
 
 test("a /more window that overlaps nothing is not merged", async () => {
@@ -698,22 +712,22 @@ test("a /more window that overlaps nothing is not merged", async () => {
   assert.deepEqual(ctx.sent[0].target, { fromEnd: 2, text: "first message" }); // thread unchanged
 });
 
-test("/latest reprints the newest messages with their numbers and asks the extension nothing", async () => {
-  const ctx = setup();
-  await withChats(ctx);
-  await openWithMessages(ctx);
-  await ctx.app.handleLine("/latest 2");
-  assert.deepEqual(ctx.sent, []);
-  assert.deepEqual(ctx.lines, ["-- latest 2 messages --", "[2] me: second", "[3] Alice: third one here"]);
-  ctx.lines.length = 0;
-  await ctx.app.handleLine("/latest");
-  assert.equal(ctx.lines[0], "-- latest 3 messages --");
-  assert.equal(ctx.lines.length, 4);
-});
-
-test("/latest with no open conversation is refused", async () => {
-  const ctx = setup();
-  await withChats(ctx);
-  await ctx.app.handleLine("/latest");
-  assert.deepEqual(ctx.lines, ["open a conversation first"]);
+test("/more clears the screen before redrawing the whole conversation", async () => {
+  let redraws = 0;
+  const lines = [];
+  const app = createApp({
+    bridge: { send: () => {}, isConnected: () => true },
+    print: (l) => lines.push(l),
+    queue: { enqueue: async () => {} },
+    onRedraw: () => redraws++,
+  });
+  await app.handleLine("/list");
+  app.handleExtensionMessage({ type: "chats", chats: CHATS });
+  await app.handleLine("/open 1");
+  app.handleExtensionMessage({ type: "messages", id: "a1", title: "Alice", messages: THREAD });
+  app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [{ from: "A", text: "ancient", ts: 0 }, ...THREAD] });
+  assert.equal(redraws, 1);
+  // no older messages: no redraw
+  app.handleExtensionMessage({ type: "messages", id: "a1", older: true, messages: [{ from: "A", text: "ancient", ts: 0 }, ...THREAD] });
+  assert.equal(redraws, 1);
 });

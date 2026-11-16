@@ -25,7 +25,6 @@ const REACTION_LABELS = ["\u{1F44D} like", "\u2764\uFE0F love", "\u{1F606} haha"
 const NOT_CONNECTED = "extension not connected, open the Messenger tab";
 const CONFIRM_TIMEOUT_MS = 20000;
 const SNIPPET_LEN = 30;
-const LATEST_DEFAULT = 10;
 const TARGET_LEN = 40; // how much of a message's text names it to the extension
 
 function snippet(text) {
@@ -62,6 +61,7 @@ export function createApp({
   queue,
   onQuit = () => {},
   onClear = () => {},
+  onRedraw = () => {},
   confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -157,16 +157,6 @@ export function createApp({
         open = { id: chat.id, name: chat.name, confirmed: false };
         thread = [];
         bridge.send({ type: "open", id: chat.id });
-        return;
-      }
-      case "latest": {
-        if (!open || !open.confirmed) {
-          print("open a conversation first");
-          return;
-        }
-        const count = Math.min(cmd.count ?? LATEST_DEFAULT, thread.length);
-        print(`-- latest ${count} message${count === 1 ? "" : "s"} --`);
-        for (let i = thread.length - count; i < thread.length; i++) print(numbered(i + 1, thread[i]));
         return;
       }
       case "more": {
@@ -278,14 +268,19 @@ export function createApp({
           }
           thread = older.concat(thread);
           const added = older.length;
-          print(`-- ${added} older message${added === 1 ? "" : "s"} (message numbers have shifted by ${added}) --`);
-          for (let i = 0; i < added; i++) print(numbered(i + 1, thread[i]));
+          // Redraw the whole conversation: older messages at the top, the
+          // ones from /open below them, the newest last.
+          onRedraw();
+          print(`-- ${open.title || clean(open.name)} --`);
+          thread.forEach((m, i) => print(numbered(i + 1, m)));
+          print(`(${added} older message${added === 1 ? "" : "s"} added at the top; message numbers shifted by ${added})`);
           return;
         }
         thread = next;
         open.confirmed = true;
         // The tab's own pane title, to cross-check against the /list name.
-        print(`-- ${clean(msg.title).trim() || "(title unreadable)"} --`);
+        open.title = clean(msg.title).trim() || "(title unreadable)";
+        print(`-- ${open.title} --`);
         thread.forEach((m, i) => print(numbered(i + 1, m)));
         return;
       }
