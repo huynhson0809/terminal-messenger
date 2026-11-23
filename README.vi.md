@@ -102,6 +102,7 @@ Mỗi dòng bạn gõ là một lệnh (bắt đầu bằng `/`) hoặc một ti
 | `//chữ` | Gửi tin bắt đầu bằng dấu gạch chéo (gửi `/chữ`). |
 | `/reply <số tin> <nội dung>` | Trả lời trích dẫn tin `[số tin]`. |
 | `/react <1-6> [số tin]` | Thả cảm xúc lên tin mới nhất của người kia, hoặc lên tin `[số tin]`. `1` thích, `2` yêu thích, `3` haha, `4` wow, `5` buồn, `6` phẫn nộ. |
+| `/image <file> [chú thích]` | Gửi một ảnh (PNG, JPEG, GIF hoặc WebP, tối đa 8 MB) từ máy bạn vào chat đang mở, kèm chú thích tùy chọn. Đường dẫn có thể đặt trong ngoặc kép hoặc có dấu `\` trước khoảng trắng, nên kéo file thả vào terminal cũng dùng được. |
 | `/more` | Tải thêm tin cũ và vẽ lại chat: tin cũ ở trên cùng, tin mới nhất ở cuối. Gõ lại để đi xa hơn. |
 | `/back` | Đóng chat đang mở. |
 | `/clear` | Xóa màn hình và phần cuộn của nó. |
@@ -135,7 +136,7 @@ Lấy lại hoặc đổi mã: `cat ~/.terminal-messenger/token`, hoặc xóa fi
 - **Cửa sổ Messenger phải luôn mở và hiển thị** (dù chỉ một góc nhỏ). Chrome tạm dừng cửa sổ bị thu nhỏ, ở desktop khác hoặc bị che kín. Việc gửi từ đó có thể thất bại (thất bại an toàn, không gửi gì), và tin mới có thể không hiện cho tới khi cửa sổ hiển thị lại.
 - **Facebook hay đổi giao diện.** Khi đó việc đọc hoặc gửi có thể hỏng cho tới khi sửa các selector trong đối tượng `SELECTORS` ở đầu [`extension/content.js`](extension/content.js). Đó là nơi duy nhất cần sửa. Hoan nghênh issue và pull request.
 - Chat mã hóa đầu cuối chỉ dùng được nếu đã được mở khóa sẵn trong tab trình duyệt.
-- Chỉ văn bản. Ảnh, sticker và video hiện dạng `[image]`...; tệp đính kèm không có ảnh, video hoặc âm thanh xem trước có thể không báo.
+- Phần đọc chỉ có văn bản: ảnh, sticker và video hiện dạng `[image]`..., tệp đính kèm không có ảnh, video hoặc âm thanh xem trước có thể không báo. Bạn gửi được ảnh bằng `/image`; chưa hỗ trợ gửi sticker, GIF từ bảng chọn của Facebook và các loại file khác.
 - `/react` và `/reply` chỉ với tới vài tin mới nhất.
 - Mạng và thiết bị của công ty hay trường có thể vẫn ghi lại các kết nối của bạn tới Facebook.
 
@@ -149,6 +150,7 @@ Lấy lại hoặc đổi mã: `cat ~/.terminal-messenger/token`, hoặc xóa fi
 | `conversation still loading; not sent` | Bạn trả lời ngay sau `/open`. Đợi khoảng 3 giây rồi thử lại. |
 | `the message box in the Messenger tab is not empty; not sent` | Ô soạn tin đang có chữ nháp. Xóa nó trong tab. |
 | `couldn't type the message correctly; not sent` | Chữ không vào được ô soạn tin. Hãy chắc cửa sổ đang hiển thị rồi thử lại. Phần `[debug: ...]` giúp ích khi báo lỗi. |
+| `the image didn't show up in the message box; not sent` | Ảnh đã đưa cho Facebook nhưng không thấy bản xem trước. Xóa mọi tệp đính kèm trong ô soạn tin rồi thử lại; báo lỗi nếu lặp lại. |
 | `couldn't find the send button; not sent` | Không nhận ra nút gửi. Xóa chữ nháp trong tab và báo lỗi. |
 | `no confirmation for "..."` | Ứng dụng không nhận được phản hồi. Hãy `/open <n>` để kiểm tra tin đã đi chưa rồi mới gửi lại. |
 | `that message isn't where it was ... run /open again` | Tin mới hoặc tin cũ làm lệch số. Hãy `/open` lại. |

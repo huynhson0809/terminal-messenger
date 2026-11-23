@@ -102,6 +102,7 @@ Every line you type is either a command (starts with `/`) or a message.
 | `//text` | Send a message that starts with a slash (sends `/text`). |
 | `/reply <msg#> <text>` | Quote-reply to message `[msg#]`. |
 | `/react <1-6> [msg#]` | React to the newest message from the other person, or to message `[msg#]`. `1` like, `2` love, `3` haha, `4` wow, `5` sad, `6` angry. |
+| `/image <file> [caption]` | Send an image (PNG, JPEG, GIF or WebP, up to 8 MB) from your computer to the open chat, with an optional caption. The path can be quoted or have escaped spaces, so dragging a file into the terminal works. |
 | `/more` | Load older messages and redraw the chat: older messages at the top, the newest last. Run it again to go further back. |
 | `/back` | Close the open chat. |
 | `/clear` | Clear the screen and its scrollback. |
@@ -135,7 +136,7 @@ Recover or replace the token: `cat ~/.terminal-messenger/token`, or delete that 
 - **The Messenger window must stay open and visible** (even a small corner). Chrome pauses minimized, off-desktop or fully covered windows. Sending from one may fail (it fails safe and sends nothing), and new messages may not appear until it is visible again.
 - **Facebook changes its page often.** When it does, reading or sending can break until the selectors in the `SELECTORS` object at the top of [`extension/content.js`](extension/content.js) are updated. They are the only place to fix. Issues and pull requests welcome.
 - End-to-end encrypted chats only work if they are already unlocked in the browser tab.
-- Text only. Images, stickers and videos show as placeholders such as `[image]`; file attachments with no image, video or audio preview may not notify.
+- Reading is text only: images, stickers and videos show as placeholders such as `[image]`. You can send images with `/image`; file attachments with no image, video or audio preview may not notify.
 - `/react` and `/reply` work on the newest few messages only.
 - Your employer's or school's network and device may still log your connections to Facebook.
 
@@ -149,6 +150,7 @@ Recover or replace the token: `cat ~/.terminal-messenger/token`, or delete that 
 | `conversation still loading; not sent` | You replied right after `/open`. Wait about 3 seconds and try again. |
 | `the message box in the Messenger tab is not empty; not sent` | A draft is sitting in the message box. Clear it in the tab. |
 | `couldn't type the message correctly; not sent` | The text did not land in the message box. Make sure the window is visible and try again. The `[debug: ...]` part helps when reporting an issue. |
+| `the image didn't show up in the message box; not sent` | The image was handed to Facebook but no preview appeared. Remove any attachment in the message box and try again; report it if it keeps happening. |
 | `couldn't find the send button; not sent` | The send button was not recognised. Clear the draft in the tab and report the issue. |
 | `no confirmation for "..."` | The app did not hear back. Run `/open <n>` to check whether the message went out before sending it again. |
 | `that message isn't where it was ... run /open again` | New or older messages shifted the numbering. Run `/open` again. |

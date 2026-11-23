@@ -1,5 +1,6 @@
 import { parseCommand } from "./commands.js";
 import { renderChats, renderMessage } from "./render.js";
+import { formatSize } from "./image.js";
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 
@@ -31,6 +32,7 @@ const HELP_LINES = [
   "  /reply <msg#> <text>        reply to message [msg#] (only the newest few messages)",
   "  /react <1-6> [msg#]         react to the newest message from them, or to message [msg#]",
   "                              1 like  2 love  3 haha  4 wow  5 sad  6 angry",
+  "  /image <file> [caption]     send an image (PNG, JPEG, GIF or WebP, up to 8 MB); drag a file in to paste its path",
   "  /more                       load older messages and show the whole chat again, oldest first",
   "  /back                       close the open chat",
   "  (messages from chats that are not open appear as [new] Chat - Sender: text)",
@@ -54,8 +56,12 @@ function snippet(text) {
 // The queue's send function. Checks the connection at send time (not only at
 // enqueue time) so a dropped extension is reported instead of a silent no-op.
 export function createBridgeSender(bridge) {
-  return async ({ id, text, ref, target }) => {
+  return async ({ id, text, ref, target, image }) => {
     if (!bridge.isConnected()) throw new Error("extension not connected");
+    if (image) {
+      bridge.send({ type: "image", id, ref, name: image.name, mime: image.mime, data: image.data, caption: text });
+      return;
+    }
     bridge.send(target ? { type: "reply", id, text, target, ref } : { type: "send", id, text, ref });
   };
 }
@@ -90,6 +96,9 @@ export function createApp({
   onClear = () => {},
   onRedraw = () => {},
   boldUnread = false,
+  loadImage = async () => {
+    throw new Error("images are not available");
+  },
   confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -194,6 +203,19 @@ export function createApp({
         bridge.send({ type: "open", id: chat.id });
         return;
       }
+      case "image": {
+        if (!requireOpen("sending an image")) return;
+        let img;
+        try {
+          img = await loadImage(cmd.path);
+        } catch (err) {
+          print(`image error: ${clean(err?.message ?? err)}`);
+          return;
+        }
+        print(`sending image ${clean(img.name)} (${formatSize(img.size)})...`);
+        await sendText(cmd.caption, undefined, img);
+        return;
+      }
       case "more": {
         if (!requireOpen("loading older messages")) return;
         print("loading older messages...");
@@ -245,14 +267,26 @@ export function createApp({
     }
   }
 
-  // One text message (or a reply to `target`) through the queue.
-  async function sendText(text, target) {
+  // One text message, a reply to `target`, or an image (with `text` as its
+  // caption) through the queue.
+  async function sendText(text, target, image) {
     const ref = `s${++refCounter}`;
     const index = chats.findIndex((c) => c.id === open.id);
-    const p = { snip: snippet(text), n: index === -1 ? "<n>" : index + 1, timer: null, text, chatId: open.id };
+    const p = {
+      snip: image ? snippet(`[image] ${image.name}`) : snippet(text),
+      n: index === -1 ? "<n>" : index + 1,
+      timer: null,
+      // What the chat will show for it, so message numbers stay aligned.
+      text: image ? text || "[image]" : text,
+      chatId: open.id,
+      slow: Boolean(image), // an upload takes longer to confirm
+    };
     pending.set(ref, p);
     try {
-      await queue.enqueue(target ? { id: open.id, text, ref, target } : { id: open.id, text, ref });
+      const item = { id: open.id, text, ref };
+      if (target) item.target = target;
+      if (image) item.image = { name: image.name, mime: image.mime, data: image.data };
+      await queue.enqueue(item);
     } catch (err) {
       settle(ref);
       print(`send failed: "${p.snip}": ${err?.message ?? err}`);
@@ -262,7 +296,7 @@ export function createApp({
     if (pending.get(ref) === p) {
       p.timer = setTimer(() => {
         if (settle(ref)) print(noConfirmation(p));
-      }, confirmTimeoutMs);
+      }, confirmTimeoutMs * (p.slow ? 4 : 1));
     }
   }
 

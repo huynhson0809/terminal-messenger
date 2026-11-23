@@ -71,3 +71,16 @@ test("/help and /? show help", () => {
   assert.deepEqual(parseCommand("/help"), { kind: "help" });
   assert.deepEqual(parseCommand("/?"), { kind: "help" });
 });
+
+test("/image takes a path (plain, quoted or with escaped spaces) and an optional caption", () => {
+  assert.deepEqual(parseCommand("/image ~/a.png"), { kind: "image", path: "~/a.png", caption: "" });
+  assert.deepEqual(parseCommand("/image ~/a.png look at this"), { kind: "image", path: "~/a.png", caption: "look at this" });
+  assert.deepEqual(parseCommand('/image "/Users/x/My Pics/a b.png" hi'), { kind: "image", path: "/Users/x/My Pics/a b.png", caption: "hi" });
+  assert.deepEqual(parseCommand("/image '/tmp/x y.png'"), { kind: "image", path: "/tmp/x y.png", caption: "" });
+  assert.deepEqual(parseCommand("/image /Users/x/My\\ Pic.png nice"), { kind: "image", path: "/Users/x/My Pic.png", caption: "nice" });
+  for (const bad of ["/image", "/image   ", '/image "unterminated', '/image ""']) {
+    const r = parseCommand(bad);
+    assert.equal(r.kind, "error", bad);
+    assert.match(r.message, /usage: \/image/);
+  }
+});

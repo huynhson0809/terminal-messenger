@@ -788,3 +788,90 @@ test("/list with the extension disconnected does not leave the open chat", async
   ctx.app.handleExtensionMessage({ type: "incoming", id: "a1", name: "Alice", message: { from: "Alice", text: "still here", ts: 1 } });
   assert.equal(ctx.lines[0], "[1] Alice: still here");
 });
+
+// ---- /image ---------------------------------------------------------------------
+
+function setupImage({ loadImage } = {}) {
+  const sent = [];
+  const lines = [];
+  const timers = fakeTimers();
+  const bridge = { send: (m) => sent.push(m), isConnected: () => true };
+  const app = createApp({
+    bridge,
+    print: (l) => lines.push(l),
+    queue: { enqueue: createBridgeSender(bridge) },
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+    loadImage,
+  });
+  return { app, sent, lines, timers };
+}
+
+const IMG = { name: "cat.png", mime: "image/png", size: 2048, data: "QUJD" };
+
+async function openA1(ctx) {
+  await ctx.app.handleLine("/list");
+  ctx.app.handleExtensionMessage({ type: "chats", chats: CHATS });
+  await ctx.app.handleLine("/open 1");
+  ctx.app.handleExtensionMessage({ type: "messages", id: "a1", title: "Alice", messages: THREAD });
+  ctx.sent.length = 0;
+  ctx.lines.length = 0;
+}
+
+test("/image sends the image with its caption and ref to the open chat", async () => {
+  const ctx = setupImage({ loadImage: async (p) => (p === "cat.png" ? IMG : assert.fail("wrong path " + p)) });
+  await openA1(ctx);
+  await ctx.app.handleLine("/image cat.png look");
+  assert.equal(ctx.lines[0], "sending image cat.png (2 KB)...");
+  assert.equal(ctx.sent.length, 1);
+  assert.deepEqual({ ...ctx.sent[0], ref: "x" }, {
+    type: "image",
+    id: "a1",
+    ref: "x",
+    name: "cat.png",
+    mime: "image/png",
+    data: "QUJD",
+    caption: "look",
+  });
+  assert.match(ctx.sent[0].ref, /^s\d+$/);
+  ctx.app.handleExtensionMessage({ type: "sent", id: "a1", ref: ctx.sent[0].ref });
+  assert.match(ctx.lines.at(-1), /^sent: "\[image\] cat\.png"/);
+});
+
+test("a sent image is added to the thread (caption, or [image]) so message numbers stay aligned", async () => {
+  const ctx = setupImage({ loadImage: async () => IMG });
+  await openA1(ctx);
+  await ctx.app.handleLine("/image cat.png");
+  ctx.app.handleExtensionMessage({ type: "sent", id: "a1", ref: ctx.sent[0].ref });
+  ctx.sent.length = 0;
+  await ctx.app.handleLine("/react 1 4");
+  assert.deepEqual(ctx.sent[0].target, { fromEnd: 0, text: "[image]" });
+});
+
+test("/image with a bad file prints the reason and sends nothing", async () => {
+  const ctx = setupImage({
+    loadImage: async () => {
+      throw new Error("file not found: nope.png");
+    },
+  });
+  await openA1(ctx);
+  await ctx.app.handleLine("/image nope.png");
+  assert.deepEqual(ctx.sent, []);
+  assert.deepEqual(ctx.lines, ["image error: file not found: nope.png"]);
+});
+
+test("/image needs an open, confirmed chat", async () => {
+  const ctx = setupImage({ loadImage: async () => IMG });
+  await ctx.app.handleLine("/image cat.png");
+  assert.deepEqual(ctx.sent, []);
+  assert.match(ctx.lines.at(-1), /open a conversation first/);
+});
+
+test("an image's confirmation waits four times longer than a text's", async () => {
+  const ctx = setupImage({ loadImage: async () => IMG });
+  await openA1(ctx);
+  await ctx.app.handleLine("/image cat.png");
+  assert.equal(ctx.timers.live()[0].ms, 20000 * 4);
+  ctx.timers.fireAll();
+  assert.match(ctx.lines.at(-1), /no confirmation for "\[image\] cat\.png"/);
+});

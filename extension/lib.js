@@ -17,6 +17,7 @@
     MAX_NAME_LEN: 200,
     MAX_PREVIEW_LEN: 300,
     MAX_MESSAGES: 30,
+    MAX_IMAGE_BYTES: 8 * 1024 * 1024, // largest image /image will send
     MAX_MORE_MESSAGES: 100, // what /more may return after loading older messages
     MAX_TARGET_TEXT: 200, // longest message-text snippet used to verify a target
     SEND_CONFIRM_TIMEOUT_MS: 5000,
@@ -87,7 +88,7 @@
 
   // Send-safety guard. Called with location.pathname right before typing and
   // again right before pressing Enter. Refuses rather than repairs.
-  function canSend(currentPath, requestedId, text) {
+  function canSend(currentPath, requestedId, text, opts = {}) {
     if (!isValidId(requestedId)) return { ok: false, error: "invalid conversation id; not sent" };
     if (typeof text !== "string") return { ok: false, error: "empty message; not sent" };
     const openId = threadIdFromPath(currentPath);
@@ -98,6 +99,7 @@
       return { ok: false, error: "a different conversation is open in the Messenger tab; not sent" };
     }
     const trimmed = text.trim();
+    if (trimmed === "" && opts.allowEmpty) return { ok: true, text: "" }; // an image with no caption
     if (trimmed === "") return { ok: false, error: "empty message; not sent" };
     if (/[\r\n]/.test(trimmed)) {
       return { ok: false, error: "multi-line messages are not supported; not sent" };
@@ -284,6 +286,8 @@
     return { events, next };
   }
 
+  const IMAGE_MIMES = Object.freeze(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
   function validateCommand(msg) {
     if (!msg || typeof msg !== "object") return { ok: false, error: "bad command" };
     switch (msg.type) {
@@ -324,6 +328,22 @@
         if (!isValidTarget(msg.target)) return { ok: false, error: "invalid target message" };
         if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
         const cmd = { type: "reply", id: msg.id, text: msg.text, target: { fromEnd: msg.target.fromEnd, text: msg.target.text } };
+        if (msg.ref !== undefined) cmd.ref = msg.ref;
+        return { ok: true, cmd };
+      }
+      case "image": {
+        if (!isValidId(msg.id)) return { ok: false, error: "invalid conversation id" };
+        if (!IMAGE_MIMES.includes(msg.mime)) return { ok: false, error: "unsupported image type" };
+        if (typeof msg.name !== "string" || !/^[^\\/\u0000-\u001f]{1,120}$/.test(msg.name)) {
+          return { ok: false, error: "invalid image name" };
+        }
+        if (typeof msg.data !== "string" || msg.data.length === 0 || msg.data.length > Math.ceil((LIMITS.MAX_IMAGE_BYTES * 4) / 3) + 8 || !/^[A-Za-z0-9+/]*={0,2}$/.test(msg.data)) {
+          return { ok: false, error: "invalid or too large image" };
+        }
+        const caption = msg.caption === undefined ? "" : msg.caption;
+        if (typeof caption !== "string" || caption.length > LIMITS.MAX_SEND_LEN) return { ok: false, error: "invalid caption" };
+        if (msg.ref !== undefined && !isValidRef(msg.ref)) return { ok: false, error: "invalid ref" };
+        const cmd = { type: "image", id: msg.id, name: msg.name, mime: msg.mime, data: msg.data, caption };
         if (msg.ref !== undefined) cmd.ref = msg.ref;
         return { ok: true, cmd };
       }
@@ -452,6 +472,9 @@
     typing: "couldn't type the message correctly; not sent (the text may still be in the message box)",
     lostFocus: "the message box lost focus; not sent (the text is still in the box)",
     noSendButton: "couldn't find the send button; not sent (the text is still in the message box)",
+    staleAttachment: "the message box in the Messenger tab already has an attachment; remove it there first; not sent",
+    attach: "couldn't hand the image to the Messenger tab; not sent",
+    attachNotShown: "the image didn't show up in the message box; not sent (remove it in the Messenger tab if it is there)",
     unconfirmed: "send not confirmed after 5 s; not retrying, run /open <n> to check before resending",
   });
 
@@ -461,6 +484,7 @@
   //         focus(box), isFocused(box), isAttached(box), insertText(box, text),
   //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>;
 //         optional settleAfterFocus() -> Promise, beforeTyping(box),
+//         attachFile(box, {name,mime,data}) -> boolean, composerImageCount(), hasStaleAttachment(),
 //         findSendButton(box) -> element|null, clickSend(el)
   //   gate: waitTurn(), markSent()   (createSendGate)
   // Every refusal happens before Enter. Enter is pressed at most once.
@@ -471,11 +495,14 @@
     gate,
     typeTimeoutMs = 1500,
     confirmTimeoutMs = LIMITS.SEND_CONFIRM_TIMEOUT_MS,
+    attachment = null, // { name, mime, data } for /image; text is then the caption (may be empty)
+    attachTimeoutMs = 15000,
   }) {
     const err = (message) => errorMsg(message);
+    const canSendOpts = attachment ? { allowEmpty: true } : {};
     // Thread, settle window, a single empty composer. Returns the box or an error.
     const check = (expectedBox) => {
-      const g = canSend(page.pathname(), id, rawText);
+      const g = canSend(page.pathname(), id, rawText, canSendOpts);
       if (!g.ok) return { error: g.error };
       if (!page.isSettled(id)) return { error: SEND_ERRORS.loading };
       const boxes = page.findComposers();
@@ -484,6 +511,9 @@
       if (expectedBox && box !== expectedBox) return { error: SEND_ERRORS.changed };
       if (!composerIsEmpty(page.textOf(box))) {
         return { error: expectedBox ? SEND_ERRORS.changed : SEND_ERRORS.notEmpty };
+      }
+      if (attachment && !expectedBox && page.hasStaleAttachment && page.hasStaleAttachment()) {
+        return { error: SEND_ERRORS.staleAttachment };
       }
       return { box, text: g.text };
     };
@@ -500,22 +530,37 @@
     const box = second.box;
     const text = second.text;
 
-    // 3. Type into the real composer and verify exactly that text landed.
-    page.focus(box);
-    if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
-    // The page needs a moment to register a programmatic focus; typing in the
-    // same tick is silently dropped by its editor.
-    if (page.settleAfterFocus) {
-      await page.settleAfterFocus();
-      if (!page.isFocused(box) || !page.isAttached(box)) return err(SEND_ERRORS.focus);
+    // The send slot's look with an empty box, recorded before anything changes.
+    let baselined = false;
+    let imagesBefore = 0;
+    if (attachment) {
+      if (!page.attachFile || !page.composerImageCount) return err(SEND_ERRORS.attach);
+      if (page.beforeTyping) page.beforeTyping(box);
+      baselined = true;
+      imagesBefore = page.composerImageCount();
+      if (!page.attachFile(box, attachment)) return err(SEND_ERRORS.attach);
+      const shown = await page.waitFor(() => page.composerImageCount() > imagesBefore, attachTimeoutMs);
+      if (!shown) return err(SEND_ERRORS.attachNotShown);
     }
-    if (page.beforeTyping) page.beforeTyping(box);
-    const inserted = page.insertText(box, text);
-    const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
-    if (!typed) {
-      // Diagnostics only (lengths and flags, never the text itself).
-      const info = typeof page.describe === "function" ? ` [debug: insert=${inserted} ${page.describe(box)}]` : "";
-      return err(SEND_ERRORS.typing + info);
+
+    // 3. Type into the real composer and verify exactly that text landed.
+    if (text !== "") {
+      page.focus(box);
+      if (!page.isFocused(box)) return err(SEND_ERRORS.focus);
+      // The page needs a moment to register a programmatic focus; typing in the
+      // same tick is silently dropped by its editor.
+      if (page.settleAfterFocus) {
+        await page.settleAfterFocus();
+        if (!page.isFocused(box) || !page.isAttached(box)) return err(SEND_ERRORS.focus);
+      }
+      if (page.beforeTyping && !baselined) page.beforeTyping(box);
+      const inserted = page.insertText(box, text);
+      const typed = await page.waitFor(() => composerMatches(page.textOf(box), text), typeTimeoutMs);
+      if (!typed) {
+        // Diagnostics only (lengths and flags, never the text itself).
+        const info = typeof page.describe === "function" ? ` [debug: insert=${inserted} ${page.describe(box)}]` : "";
+        return err(SEND_ERRORS.typing + info);
+      }
     }
 
     // With a send button (page.findSendButton), it must have changed from its
@@ -525,11 +570,12 @@
     }
 
     // 4. Last re-check right before the send (no await after this point).
-    const g = canSend(page.pathname(), id, text);
+    const g = canSend(page.pathname(), id, text, canSendOpts);
     if (!g.ok) return err(`${g.error} (the text is still in the message box)`);
     if (!page.isSettled(id)) return err(`${SEND_ERRORS.loading} (the text is still in the message box)`);
     const boxes = page.findComposers();
-    if (boxes.length !== 1 || boxes[0] !== box || !page.isAttached(box) || !page.isFocused(box)) {
+    // An image with no caption never typed, so the box need not hold focus.
+    if (boxes.length !== 1 || boxes[0] !== box || !page.isAttached(box) || (text !== "" && !page.isFocused(box))) {
       return err(SEND_ERRORS.lostFocus);
     }
 
@@ -543,7 +589,11 @@
     const cleared = await page.waitFor(() => {
       if (threadIdFromPath(page.pathname()) !== id) return false;
       const now = page.findComposers();
-      return now.length === 1 && composerIsEmpty(page.textOf(now[0]));
+      return (
+        now.length === 1 &&
+        composerIsEmpty(page.textOf(now[0])) &&
+        (!attachment || page.composerImageCount() <= imagesBefore)
+      );
     }, confirmTimeoutMs);
     if (!cleared) return { ...err(SEND_ERRORS.unconfirmed), unconfirmed: true };
     return { type: "sent", id };
@@ -603,6 +653,7 @@
     diffUnreadChats,
     validateCommand,
     isValidTarget,
+    IMAGE_MIMES,
     isUnreadFontWeight,
     textMatchesSnippet,
     REACTION_EMOJI,

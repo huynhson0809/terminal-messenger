@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadOrCreateToken, startBridge } from "./bridge.js";
 import { createSendQueue } from "./sendQueue.js";
 import { createApp, createBridgeSender } from "./app.js";
+import { loadImage } from "./image.js";
 import { burstMessage, createPasteGuard } from "./pasteGuard.js";
 import { needsNewToken } from "./token.js";
 
@@ -62,6 +63,7 @@ app = createApp({
   onClear: () => process.stdout.write("\x1b[2J\x1b[3J\x1b[H"),
   // Redraw the visible screen (for /more); the scrollback is left alone.
   // Bold unread chats in /list, on a real terminal unless NO_COLOR is set.
+  loadImage,
   boldUnread: Boolean(process.stdout.isTTY) && !process.env.NO_COLOR,
   onRedraw: () => process.stdout.write("\x1b[2J\x1b[H"),
 });

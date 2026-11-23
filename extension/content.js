@@ -55,6 +55,10 @@
     toolbarButton: '[role="button"]',
     reactionOption: '[role="menuitemradio"]',
 
+    // The one (hidden) file input in the conversation pane: handing it a file
+    // is what choosing a file in the attach dialog does.
+    fileInput: '[role="main"] input[type="file"]',
+
     // Buttons around the message box (emoji, send / like...). Their labels are
     // localized, so the send button is found by position (see findSendButton).
     composerButton: '[role="button"], button',
@@ -87,6 +91,7 @@
   const SCAN_THROTTLE_MS = 500;
   const MAX_EVENTS_PER_SCAN = 5;
   const MORE_MAX_STEPS = 12;
+  const IMAGE_CONFIRM_MS = 45000; // an upload can take a while
 
   class LayoutError extends Error {}
 
@@ -604,7 +609,51 @@
 
   const FOCUS_SETTLE_MS = 300;
 
+  // The part of the page around the message box: its highest ancestor that
+  // does not also contain the message list. Previews of an attachment live here.
+  function composerArea(box) {
+    const list = first(SELECTORS.messageList);
+    let area = box;
+    for (let el = box; el && !(list && el.contains(list)); el = el.parentElement) area = el;
+    return area;
+  }
+
+  function currentComposer() {
+    const boxes = Array.from(document.querySelectorAll(SELECTORS.composer));
+    return boxes.length === 1 ? boxes[0] : null;
+  }
+
+  function attachFile(box, att) {
+    const inputs = Array.from(document.querySelectorAll(SELECTORS.fileInput));
+    if (inputs.length !== 1) return false;
+    let file;
+    try {
+      const bin = atob(att.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      file = new File([bytes], att.name, { type: att.mime });
+    } catch {
+      return false;
+    }
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    inputs[0].files = dt.files;
+    inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+    inputs[0].dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
   const page = {
+    attachFile,
+    composerImageCount: () => {
+      const box = currentComposer();
+      return box ? composerArea(box).querySelectorAll("img, video, canvas").length : 0;
+    },
+    // Best effort: an earlier attachment still sitting in the box (blob: preview).
+    hasStaleAttachment: () => {
+      const box = currentComposer();
+      return box ? composerArea(box).querySelector('img[src^="blob:"]') !== null : false;
+    },
     settleAfterFocus: () => new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS)),
     beforeTyping: (box) => {
       const b = sendSlotButton(box);
@@ -652,11 +701,18 @@
     document.dispatchEvent(new Event(on ? "tm-shim-on" : "tm-shim-off"));
   }
 
-  async function handleSend(id, text) {
+  async function handleSend(id, text, attachment = null) {
     setFocusShim(true);
     try {
-      const reply = await lib.performSend({ id, text, page, gate: sendGate, typeTimeoutMs: TYPE_TIMEOUT_MS });
-      if (reply.type === "sent") recentSent.add(text);
+      const reply = await lib.performSend({
+        id,
+        text,
+        page,
+        gate: sendGate,
+        typeTimeoutMs: TYPE_TIMEOUT_MS,
+        ...(attachment ? { attachment, confirmTimeoutMs: IMAGE_CONFIRM_MS } : {}),
+      });
+      if (reply.type === "sent" && text) recentSent.add(text);
       return reply;
     } finally {
       setFocusShim(false);
@@ -680,6 +736,8 @@
           return await handleReact(cmd.id, cmd.n, cmd.target);
         case "reply":
           return await handleReply(cmd.id, cmd.text, cmd.target);
+        case "image":
+          return await handleSend(cmd.id, cmd.caption, { name: cmd.name, mime: cmd.mime, data: cmd.data });
         case "more":
           return await handleMore(cmd.id);
         default:

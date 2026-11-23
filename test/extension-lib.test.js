@@ -935,3 +935,114 @@ test("an unread chat is recognised by bold text (font-weight 600+), not by words
   assert.equal(lib.isUnreadFontWeight(""), false);
   assert.equal(lib.isUnreadFontWeight(undefined), false);
 });
+
+// ---- images: validateCommand and performSend with an attachment -------------------
+
+test("validateCommand accepts a well-formed image command and nothing sloppy", () => {
+  const ok = { type: "image", id: "55", name: "cat.png", mime: "image/png", data: "QUJD", caption: "hi", ref: "s1" };
+  assert.deepEqual(lib.validateCommand(ok), { ok: true, cmd: ok });
+  assert.equal(lib.validateCommand({ ...ok, caption: undefined }).cmd.caption, "");
+  for (const bad of [
+    { mime: "image/svg+xml" },
+    { mime: "application/pdf" },
+    { name: "../x.png" },
+    { name: "a/b.png" },
+    { name: "" },
+    { data: "" },
+    { data: "not base64!!" },
+    { data: "A".repeat(11 * 1024 * 1024) },
+    { ref: "bad ref!" },
+    { id: "" },
+  ]) {
+    assert.equal(lib.validateCommand({ ...ok, ...bad }).ok, false, JSON.stringify(bad).slice(0, 60));
+  }
+});
+
+function imagePage(opts = {}) {
+  const page = fakePage(opts);
+  page.images = 0;
+  page.attached = [];
+  page.stale = false;
+  page.attachFile = (b, att) => {
+    page.attached.push(att.name);
+    page.images++;
+    return true;
+  };
+  page.composerImageCount = () => page.images;
+  page.hasStaleAttachment = () => page.stale;
+  page.clicks = 0;
+  page.findSendButton = () => (page.images > 0 || page.boxes[0].text ? { send: true } : null);
+  page.clickSend = () => {
+    page.clicks++;
+    page.boxes[0].text = "";
+    page.images = 0;
+  };
+  return page;
+}
+
+const ATT = { name: "cat.png", mime: "image/png", data: "QUJD" };
+
+test("performSend with an image and no caption attaches, then clicks send once", async () => {
+  const page = imagePage();
+  const gate = fakeGate(page);
+  const r = await lib.performSend({ id: "55", text: "", page, gate, attachment: ATT });
+  assert.deepEqual(r, { type: "sent", id: "55" });
+  assert.deepEqual(page.attached, ["cat.png"]);
+  assert.deepEqual(page.inserted, []);
+  assert.equal(page.clicks, 1);
+  assert.equal(page.enters, 0);
+  assert.equal(gate.marks, 1);
+});
+
+test("performSend with an image and a caption types the caption after attaching", async () => {
+  const page = imagePage();
+  const r = await lib.performSend({ id: "55", text: " nice ", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.type, "sent");
+  assert.deepEqual(page.inserted, ["nice"]);
+  assert.equal(page.clicks, 1);
+});
+
+test("performSend refuses an image when an attachment is already in the box", async () => {
+  const page = imagePage();
+  page.stale = true;
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.type, "error");
+  assert.match(r.message, /already has an attachment/);
+  assert.deepEqual(page.attached, []);
+  assert.equal(page.clicks, 0);
+});
+
+test("performSend sends nothing if the image never shows up in the box", async () => {
+  const page = imagePage();
+  page.attachFile = () => true; // handed over, but no preview appears
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.type, "error");
+  assert.match(r.message, /didn't show up/);
+  assert.equal(page.clicks, 0);
+});
+
+test("performSend refuses an image to the wrong chat before attaching anything", async () => {
+  const page = imagePage({ path: "/messages/t/66/" });
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.type, "error");
+  assert.deepEqual(page.attached, []);
+});
+
+test("an empty text without an attachment is still refused", async () => {
+  const page = imagePage();
+  const r = await lib.performSend({ id: "55", text: "  ", page, gate: fakeGate(page) });
+  assert.equal(r.type, "error");
+  assert.match(r.message, /empty message/);
+});
+
+test("performSend does not call an image sent until the preview is gone too", async () => {
+  const page = imagePage();
+  page.clickSend = () => {
+    page.clicks++;
+    page.boxes[0].text = ""; // text clears but the preview stays
+  };
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.type, "error");
+  assert.equal(r.unconfirmed, true);
+  assert.equal(page.clicks, 1);
+});

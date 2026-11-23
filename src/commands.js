@@ -1,3 +1,27 @@
+// "<path> [caption]": the path may be quoted ("..." or '...') or have
+// backslash-escaped spaces (what dragging a file into a terminal pastes).
+function splitPathAndCaption(rest) {
+  const text = rest.trim();
+  if (text === "") return null;
+  let path = "";
+  let i = 0;
+  const quote = text[0] === '"' || text[0] === "'" ? text[0] : null;
+  if (quote) {
+    const end = text.indexOf(quote, 1);
+    if (end === -1) return null;
+    path = text.slice(1, end);
+    i = end + 1;
+  } else {
+    while (i < text.length && !/\s/.test(text[i])) {
+      if (text[i] === "\\" && i + 1 < text.length) i++;
+      path += text[i];
+      i++;
+    }
+  }
+  if (path === "") return null;
+  return { path, caption: text.slice(i).trim() };
+}
+
 export function parseCommand(line) {
   const trimmed = String(line ?? "").trim();
   if (trimmed === "") return { kind: "empty" };
@@ -5,6 +29,11 @@ export function parseCommand(line) {
   if (!trimmed.startsWith("/")) return { kind: "send", text: trimmed };
 
   const [cmd, ...args] = trimmed.split(/\s+/);
+  if (cmd === "/image") {
+    const parsed = splitPathAndCaption(trimmed.slice("/image".length));
+    if (!parsed) return { kind: "error", message: "usage: /image <file path> [caption]" };
+    return { kind: "image", path: parsed.path, caption: parsed.caption };
+  }
   if (cmd === "/reply") {
     const m = /^\/reply\s+(\d+)\s+([\s\S]+)$/.exec(trimmed);
     if (!m || Number(m[1]) < 1) return { kind: "error", message: "usage: /reply <message number> <text>" };
@@ -41,7 +70,7 @@ export function parseCommand(line) {
     default:
       return {
         kind: "error",
-        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /clear, /help, /back, /quit; use // to start a message with a slash)`,
+        message: `unknown command ${cmd} (try /list, /open <n>, /more, /react <1-6> [msg#], /reply <msg#> <text>, /image <file>, /clear, /help, /back, /quit; use // to start a message with a slash)`,
       };
   }
 }
