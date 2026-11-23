@@ -91,7 +91,7 @@
   const SCAN_THROTTLE_MS = 500;
   const MAX_EVENTS_PER_SCAN = 5;
   const MORE_MAX_STEPS = 12;
-  const IMAGE_CONFIRM_MS = 45000; // an upload can take a while
+  const IMAGE_CONFIRM_MS = 30000; // an upload can take a while
 
   class LayoutError extends Error {}
 
