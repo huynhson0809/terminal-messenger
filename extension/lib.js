@@ -485,6 +485,7 @@
   //         pressEnter(box), waitFor(predicate, timeoutMs) -> Promise<boolean>;
 //         optional settleAfterFocus() -> Promise, beforeTyping(box),
 //         attachFile(box, {name,mime,data}) -> boolean, composerImageCount(), hasStaleAttachment(),
+//         settleAfterAttach(ms) -> Promise, describeButton(el) -> string,
 //         findSendButton(box) -> element|null, clickSend(el)
   //   gate: waitTurn(), markSent()   (createSendGate)
   // Every refusal happens before Enter. Enter is pressed at most once.
@@ -541,6 +542,9 @@
       if (!page.attachFile(box, attachment)) return err(SEND_ERRORS.attach);
       const shown = await page.waitFor(() => page.composerImageCount() > imagesBefore, attachTimeoutMs);
       if (!shown) return err(SEND_ERRORS.attachNotShown);
+      // The preview appears at once, the upload behind it takes longer, and the
+      // send button does nothing until it is done: give it time, by size.
+      if (page.settleAfterAttach) await page.settleAfterAttach(attachSettleMs(attachment));
     }
 
     // 3. Type into the real composer and verify exactly that text landed.
@@ -595,8 +599,18 @@
         (!attachment || page.composerImageCount() <= imagesBefore)
       );
     }, confirmTimeoutMs);
-    if (!cleared) return { ...err(SEND_ERRORS.unconfirmed), unconfirmed: true };
+    if (!cleared) {
+      const info = sendButton && typeof page.describeButton === "function" ? ` [debug: ${page.describeButton(sendButton)}]` : "";
+      return { ...err(SEND_ERRORS.unconfirmed + info), unconfirmed: true };
+    }
     return { type: "sent", id };
+  }
+
+  // How long to let an upload finish before clicking send: 1.5 s plus 1 s per
+  // 200 KB, at most 15 s.
+  function attachSettleMs(attachment) {
+    const bytes = Math.floor(((attachment && attachment.data ? attachment.data.length : 0) * 3) / 4);
+    return Math.min(15000, 1500 + Math.round(bytes / 200));
   }
 
   // Milliseconds to wait so that at least minGapMs separates two Enter presses.
@@ -655,6 +669,7 @@
     isValidTarget,
     IMAGE_MIMES,
     isUnreadFontWeight,
+    attachSettleMs,
     textMatchesSnippet,
     REACTION_EMOJI,
     reactionEmoji,

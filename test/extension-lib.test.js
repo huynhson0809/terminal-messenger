@@ -1046,3 +1046,36 @@ test("performSend does not call an image sent until the preview is gone too", as
   assert.equal(r.unconfirmed, true);
   assert.equal(page.clicks, 1);
 });
+
+test("attachSettleMs scales with the image size and is capped", () => {
+  const b64 = (bytes) => "A".repeat(Math.ceil((bytes * 4) / 3));
+  assert.equal(lib.attachSettleMs({ data: "" }), 1500);
+  assert.equal(lib.attachSettleMs({ data: b64(200 * 1000) }), 2500);
+  assert.equal(lib.attachSettleMs({ data: b64(445 * 1024) }), 1500 + Math.round((445 * 1024) / 200));
+  assert.equal(lib.attachSettleMs({ data: b64(8 * 1024 * 1024) }), 15000);
+});
+
+test("performSend waits for the upload to settle after the preview shows, before sending", async () => {
+  const page = imagePage();
+  const order = [];
+  page.settleAfterAttach = async (ms) => order.push(`settle:${ms}`);
+  const click = page.clickSend;
+  page.clickSend = (b) => {
+    order.push("click");
+    click(b);
+  };
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: { ...ATT, data: "QUJD" } });
+  assert.equal(r.type, "sent");
+  assert.deepEqual(order, ["settle:1500", "click"]);
+});
+
+test("an unconfirmed send includes what was clicked, for diagnostics", async () => {
+  const page = imagePage();
+  page.describeButton = () => "aria=Press enter disabled=null";
+  page.clickSend = () => {
+    page.clicks++; // nothing clears
+  };
+  const r = await lib.performSend({ id: "55", text: "", page, gate: fakeGate(page), attachment: ATT });
+  assert.equal(r.unconfirmed, true);
+  assert.match(r.message, /\[debug: aria=Press enter disabled=null\]/);
+});

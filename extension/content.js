@@ -656,6 +656,10 @@
       const box = currentComposer();
       return box ? composerArea(box).querySelector('img[src^="blob:"], video[src^="blob:"]') !== null : false;
     },
+    settleAfterAttach: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    // For the "not confirmed" diagnostics: what was clicked (a label prefix and flags).
+    describeButton: (b) =>
+      `aria=${(b.getAttribute("aria-label") || "").slice(0, 18)} disabled=${b.getAttribute("aria-disabled")} tabindex=${b.getAttribute("tabindex")}`,
     settleAfterFocus: () => new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS)),
     beforeTyping: (box) => {
       const b = sendSlotButton(box);
