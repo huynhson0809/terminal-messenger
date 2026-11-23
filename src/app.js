@@ -377,7 +377,11 @@ export function createApp({
       case "error": {
         const p = typeof msg.ref === "string" ? settle(msg.ref) : null;
         if (!p) print(`error: ${clean(msg.message)}`);
-        else if (msg.unconfirmed === true) print(noConfirmation(p));
+        else if (msg.unconfirmed === true) {
+          print(noConfirmation(p));
+          // The extension's own detail (for example its [debug: ...] part).
+          if (msg.message) print(`  (${clean(msg.message)})`);
+        }
         else if (p.kind === "react") print(`not reacted ${p.snip}: ${clean(msg.message)}`);
         else print(`not sent: "${p.snip}": ${clean(msg.message)}`);
         return;

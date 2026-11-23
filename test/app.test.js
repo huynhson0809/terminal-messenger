@@ -875,3 +875,19 @@ test("an image's confirmation waits four times longer than a text's", async () =
   ctx.timers.fireAll();
   assert.match(ctx.lines.at(-1), /no confirmation for "\[image\] cat\.png"/);
 });
+
+test("an unconfirmed send prints the extension's detail on a second line", async () => {
+  const ctx = setup();
+  await withChats(ctx);
+  await openChat(ctx);
+  await ctx.app.handleLine("hello");
+  const { ref } = ctx.sent[0];
+  ctx.app.handleExtensionMessage({
+    type: "error",
+    unconfirmed: true,
+    ref,
+    message: "send not confirmed after 5 s [debug: aria=Press enter disabled=null]",
+  });
+  assert.match(ctx.lines.at(-2), /^no confirmation for "hello"/);
+  assert.equal(ctx.lines.at(-1), "  (send not confirmed after 5 s [debug: aria=Press enter disabled=null])");
+});
