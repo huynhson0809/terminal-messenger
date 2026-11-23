@@ -403,7 +403,7 @@ test("I1: an unconfirmed error says to check with /open before resending", async
   await openChat(c, 2);
   await c.app.handleLine("hello");
   c.app.handleExtensionMessage({ type: "error", message: "x", unconfirmed: true, ref: c.sent[0].ref });
-  assert.deepEqual(c.lines, ['no confirmation for "hello"; run /open 2 to check before resending']);
+  assert.deepEqual(c.lines, ['no confirmation for "hello"; run /open 2 to check before resending', "  (x)"]);
 });
 
 test("I1: snippets are cut at 30 characters", async () => {
