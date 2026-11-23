@@ -584,24 +584,22 @@
   // label really changed after typing, so a like is never sent by mistake.
   let sendSlotLabelBefore = null;
 
+  // Every button in the whole message-box area (not just the nearest group:
+  // with an attachment the layout changes and the send button ends up outside
+  // the small group next to the text field).
   function composerButtons(box) {
-    let el = box;
-    for (let i = 0; i < 8 && el; i++, el = el.parentElement) {
-      const btns = Array.from(el.querySelectorAll(SELECTORS.composerButton)).filter((b) => !box.contains(b));
-      if (btns.length >= 3) return btns;
-    }
-    return [];
+    return Array.from(composerArea(box).querySelectorAll(SELECTORS.composerButton)).filter((b) => !box.contains(b));
   }
 
+  // The send slot is the button furthest to the right in that area.
   function sendSlotButton(box) {
-    const boxRight = box.getBoundingClientRect().right;
     let best = null;
-    let bestLeft = -Infinity;
+    let bestRight = -Infinity;
     for (const b of composerButtons(box)) {
       const r = b.getBoundingClientRect();
-      if (r.width > 0 && r.left >= boxRight && r.left > bestLeft) {
+      if (r.width > 0 && r.height > 0 && r.right > bestRight) {
         best = b;
-        bestLeft = r.left;
+        bestRight = r.right;
       }
     }
     return best;
