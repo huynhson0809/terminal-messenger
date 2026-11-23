@@ -645,14 +645,16 @@
 
   const page = {
     attachFile,
+    // Previews of attached files only (blob: images/videos). Not every <img>:
+    // the send button's emoji is one too and goes away once a file is attached.
     composerImageCount: () => {
       const box = currentComposer();
-      return box ? composerArea(box).querySelectorAll("img, video, canvas").length : 0;
+      return box ? composerArea(box).querySelectorAll('img[src^="blob:"], video[src^="blob:"]').length : 0;
     },
     // Best effort: an earlier attachment still sitting in the box (blob: preview).
     hasStaleAttachment: () => {
       const box = currentComposer();
-      return box ? composerArea(box).querySelector('img[src^="blob:"]') !== null : false;
+      return box ? composerArea(box).querySelector('img[src^="blob:"], video[src^="blob:"]') !== null : false;
     },
     settleAfterFocus: () => new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS)),
     beforeTyping: (box) => {
